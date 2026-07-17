@@ -35,7 +35,8 @@ The Device bearer scope is deliberately narrow:
 | Change capture policy or revoke | Own devices | No |
 | Deliver redacted capture records | No | Yes |
 | Browse Organization capture evidence | Yes | No |
-| Submit Candidates or administer | Role-dependent later | No |
+| Submit a Candidate skill | Analysis credential only | No |
+| Approve or administer standards | Administrator browser only | No |
 
 The server returns an explicit `DEVICE_CREDENTIAL_SCOPE_FORBIDDEN` error when a
 Device credential attempts Organization Session browsing, capture-record reads,
@@ -104,3 +105,9 @@ packaging production-stable. The server validates the delivered redaction
 evidence shape but does not possess the device's fingerprint key and therefore
 does not recreate local evidence; protection against a modified relay sending
 unredacted content remains a defense-in-depth follow-up.
+
+Back up PostgreSQL for accepted central history. The default relay state lives
+under `~/Library/Application Support/coding-agent-observability-relay` and may
+contain unacknowledged Organization-visible content, a Device credential, the
+fingerprint key, and private setup backups. Protect it as sensitive local state.
+Uninstall removes that state; it does not delete PostgreSQL history.

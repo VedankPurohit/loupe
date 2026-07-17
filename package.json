@@ -15,6 +15,7 @@
     "prototype:notebook": "pnpm --filter @workspace/prototype-notebook dev",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter @workspace/agent-adapter test && pnpm --filter @workspace/server test && pnpm --filter @workspace/relay test",
+    "test:compose": "node scripts/compose-smoke.mjs",
     "test:e2e": "playwright test",
     "db:generate": "pnpm --filter @workspace/database db:generate",
     "db:migrate": "pnpm --filter @workspace/database db:migrate"

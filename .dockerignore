@@ -1,0 +1,14 @@
+.git
+.scratch
+.serena
+.env
+.env.*
+!.env.example
+**/.DS_Store
+**/node_modules
+**/dist
+test-results
+playwright-report
+coverage
+*.log
+

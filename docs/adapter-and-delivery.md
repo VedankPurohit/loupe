@@ -78,8 +78,10 @@ Redaction precedes `createCodexSourceEvent` and SQLite persistence. The central
 store verifies the payload hash before insertion. Reprocessing passes the
 retained `rawPayload` through a named newer adapter/projection version and
 writes new projection/reconciliation records; it must never update the source
-event. Projection tables and operator reprocessing controls arrive in ticket
-05, while this ticket preserves all inputs required for that replay.
+event. The current projection tables preserve the adapter and projection
+versions needed for deterministic replay. A general operator-triggered
+reprocessing command is not yet delivered; a future command must keep this
+append-only boundary.
 
 ## Troubleshooting
 

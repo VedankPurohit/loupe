@@ -2,6 +2,18 @@
 
 The Analysis CLI uses a revocable member-owned bearer credential against the same `/api/v1` evidence contracts as the browser. Its fixed scopes are `organization:evidence:read` and `candidate:submit`; an Administrator-owned credential receives no additional authority.
 
+Build it once from the repository root:
+
+```bash
+pnpm --filter @workspace/diagnostic-cli build
+node apps/diagnostic-cli/dist/cli.js --help
+```
+
+The examples below use the package bin name `loupe-diagnostic`. From an
+uninstalled checkout, replace that name with
+`node apps/diagnostic-cli/dist/cli.js`. There is no published global CLI package
+in this repository.
+
 ## Create and revoke a credential
 
 Credential management is a human action authenticated by the member's browser Session. The plaintext credential is returned only on creation; PostgreSQL stores its SHA-256 digest.
@@ -23,6 +35,10 @@ export LOUPE_ANALYSIS_CREDENTIAL=analysis_REDACTED
 ```
 
 Revocation is immediate. Later requests return the stable `ANALYSIS_CREDENTIAL_REQUIRED` envelope. Revocation does not delete accepted evidence, previously submitted Candidate versions, or reviewer history.
+
+`LOUPE_BROWSER_SESSION` is the value of the HttpOnly `browser_session` cookie,
+not an Analysis or Device token. Treat it as a secret, keep it out of shell
+history where practical, and unset it after credential management.
 
 An Analysis credential cannot change Session annotations or retained evidence; approve, publish, pause, or roll back a standard; or call Device capture ingestion. These return `ANALYSIS_CREDENTIAL_SCOPE_FORBIDDEN` even when the credential belongs to an Administrator. A Device credential remains separately forbidden from Organization evidence and Candidate submission.
 
@@ -57,6 +73,10 @@ Use the companion skill at `skills/analyze-organization-evidence`. Its Candidate
 ```bash
 loupe-diagnostic candidate submit candidate.json --json
 ```
+
+Start from the complete reference manifest at
+`skills/analyze-organization-evidence/references/candidate-manifest.md`; do not
+submit the reference placeholders unchanged.
 
 The CLI supplies a missing hash by sorting package files by path and hashing the UTF-8 JSON serialization of `{"files":[...]}`. The server independently verifies the hash, resolves every citation inside the credential's Organization, and stores the package, context, uncertainty, claims, citations, submitter, and hash as an immutable version. The response includes stable Candidate/version ids and a reviewer deep link.
 

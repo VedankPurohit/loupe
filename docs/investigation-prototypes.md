@@ -2,7 +2,10 @@
 
 Ticket 11 asks one question: which interaction model best helps a developer or Coach move from Organization activity to the exact failed Tool invocation in a real Session, without reading raw telemetry or weakening evidence fidelity?
 
-Three throwaway React/Vite applications answer that question differently. They are comparison material for the user-selection gate before ticket 12; this document intentionally does not select a winner.
+Three throwaway React/Vite applications answered that question differently.
+This document preserves the comparison and records the selected production
+direction; the production behavior is documented separately in
+[Production investigation interface](production-investigation-interface.md).
 
 ## Run the prototypes
 

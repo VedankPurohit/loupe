@@ -53,6 +53,8 @@ silently overwritten.
 The command exchanges a short-lived enrollment grant for a Device credential,
 installs `org.coding-agent-observability.relay.plist`, starts it, records a test
 event in SQLite, and waits for an authenticated idempotent acknowledgement.
+For a Compose deployment, keep the API URL on port `3000` (or the configured
+`APP_PORT`); the production browser URL on port `8080` is not the relay endpoint.
 
 ## Service lifecycle and health
 
