@@ -104,6 +104,13 @@ export async function recordSetupVerification(options: {
       source: "setup_verification_complete",
     },
   });
+  // The verification Session is relay-synthetic and genuinely over, so clear
+  // its local liveness directly; a real Codex root Stop never implies that.
+  recordLocalSessionActivity({
+    databasePath: join(options.stateDir, "relay.sqlite"),
+    producerEvent: "SessionEnd",
+    payload: { session_id: sessionId },
+  });
   return [startId, stopId];
 }
 export async function deliverPendingOnce(options: {

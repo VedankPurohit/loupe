@@ -88,7 +88,11 @@ export function recordLocalSessionActivity(options: {
   const database = new DatabaseSync(options.databasePath);
   try {
     ensureSessionActivityTable(database);
-    if (options.producerEvent === "Stop" || options.producerEvent === "SessionEnd") {
+    // A root `Stop` hook ends one Turn, not the resumable Session; the spec
+    // forbids treating it as completion. Only an explicit session-end signal
+    // clears liveness immediately — otherwise the bounded idle window in
+    // listActiveSessionIds is the sole expiry mechanism.
+    if (options.producerEvent === "SessionEnd") {
       database.prepare("DELETE FROM local_active_sessions WHERE session_id = ?").run(sessionId);
       return;
     }

@@ -603,7 +603,7 @@ describe("mandatory Organization standard synchronization", () => {
     await expect(readFile(join(abandoned, "partial"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("durably defers installation from SessionStart until the matching Stop", async () => {
+  it("durably defers installation while a resumable Session is live, including after a per-turn Stop", async () => {
     const distribution = await startDistribution();
     servers.push(distribution.server);
     const stateDir = join(tmpdir(), `standard-sync-session-${randomUUID()}`);
@@ -640,13 +640,54 @@ describe("mandatory Organization standard synchronization", () => {
       payload: { session_id: "session-active" },
       observedAt: "2026-07-17T08:02:00.000Z",
     });
+    // A root Stop ends one Turn, not the resumable Session: the session must
+    // still defer installation during ordinary between-turn idle time.
+    const stillDeferred = await syncOrganizationStandardOnce({
+      installRoot: stateDir,
+      baseUrl: distribution.baseUrl,
+      deviceCredential: "device_active_session",
+      activeSessionIds: async () =>
+        listActiveSessionIds({
+          databasePath,
+          now: new Date("2026-07-17T08:03:00.000Z"),
+        }),
+    });
+    expect(stillDeferred.statuses[0]).toMatchObject({
+      state: "deferred_active_session",
+      installedReleaseId: null,
+      activeSessionIds: ["session-active"],
+    });
+    expect(distribution.artifactRequests).toHaveLength(0);
+
+    // Only the bounded idle window expires liveness and allows installation.
     const installed = await syncOrganizationStandardOnce({
       installRoot: stateDir,
       baseUrl: distribution.baseUrl,
       deviceCredential: "device_active_session",
-      activeSessionIds: async () => listActiveSessionIds({ databasePath }),
+      activeSessionIds: async () =>
+        listActiveSessionIds({
+          databasePath,
+          now: new Date("2026-07-17T08:33:01.000Z"),
+        }),
     });
     expect(installed.statuses[0]?.state).toBe("installed");
+
+    // An explicit session-end signal still clears liveness immediately.
+    recordLocalSessionActivity({
+      databasePath,
+      producerEvent: "SessionStart",
+      payload: { session_id: "session-ended" },
+      observedAt: "2026-07-17T08:34:00.000Z",
+    });
+    recordLocalSessionActivity({
+      databasePath,
+      producerEvent: "SessionEnd",
+      payload: { session_id: "session-ended" },
+      observedAt: "2026-07-17T08:34:30.000Z",
+    });
+    expect(
+      listActiveSessionIds({ databasePath, now: new Date("2026-07-17T08:35:00.000Z") }),
+    ).toEqual([]);
   });
 
   it("reports a staging failure without removing an already-owned destination", async () => {
