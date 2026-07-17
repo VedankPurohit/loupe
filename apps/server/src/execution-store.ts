@@ -4,6 +4,12 @@ import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
+import {
+  analyzeCodexEvidence,
+  type CodexEvidenceInput,
+  type CodexSource,
+  type VersionedPriceTable,
+} from "@workspace/agent-adapter";
 import type {
   ActivityEpisode,
   AgentRun,
@@ -86,8 +92,11 @@ interface SourceRow {
   deliveringDeviceId: string;
   source: string;
   producerEvent: string;
+  producerVersion: string;
   occurredAt: Date;
+  capturedAt: Date;
   receivedAt: Date;
+  capturePath: string;
   rawPayload: unknown;
   gitContext: unknown;
 }
@@ -286,6 +295,36 @@ function otelAttributes(payload: unknown): Record<string, string> | undefined {
     }
   }
   return result;
+}
+
+function sourceIdentityValues(value: unknown, found = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) sourceIdentityValues(item, found);
+    return found;
+  }
+  const current = asRecord(value);
+  if (!current) return found;
+  for (const key of [
+    "session_id",
+    "turn_id",
+    "agent_id",
+  ]) {
+    const identity = stringField(current, key);
+    if (identity) found.add(identity);
+  }
+  const attributeKey = stringField(current, "key");
+  if (
+    attributeKey &&
+    ["session.id", "conversation.id", "turn.id", "thread.id"].includes(
+      attributeKey,
+    )
+  ) {
+    const wrapped = asRecord(current.value);
+    const scalar = wrapped?.stringValue ?? wrapped?.string_value;
+    if (typeof scalar === "string") found.add(scalar);
+  }
+  for (const nested of Object.values(current)) sourceIdentityValues(nested, found);
+  return found;
 }
 
 function buildProjection(rows: SourceRow[]): SessionState[] {
@@ -508,7 +547,10 @@ export class ExecutionStore {
   private readonly client;
   private readonly database;
 
-  constructor(databaseUrl: string) {
+  constructor(
+    databaseUrl: string,
+    private readonly priceTable?: VersionedPriceTable,
+  ) {
     this.client = postgres(databaseUrl);
     this.database = drizzle(this.client);
   }
@@ -531,8 +573,11 @@ export class ExecutionStore {
         deliveringDeviceId: sourceEvents.deliveringDeviceId,
         source: sourceEvents.source,
         producerEvent: sourceEvents.producerEvent,
+        producerVersion: sourceEvents.producerVersion,
         occurredAt: sourceEvents.occurredAt,
+        capturedAt: sourceEvents.capturedAt,
         receivedAt: sourceEvents.receivedAt,
+        capturePath: sourceEvents.capturePath,
         rawPayload: sourceEvents.rawPayload,
         gitContext: sourceEvents.gitContext,
       })
@@ -666,7 +711,7 @@ export class ExecutionStore {
       )
       .limit(1);
     if (!row) return undefined;
-    const [activities, turns, agents, timeline] = await Promise.all([
+    const [activities, turns, agents, timeline, retainedEvidence] = await Promise.all([
       this.database
         .select()
         .from(activityEpisodes)
@@ -687,7 +732,52 @@ export class ExecutionStore {
         .from(executionTimelineEvents)
         .where(eq(executionTimelineEvents.sessionId, row.id))
         .orderBy(asc(executionTimelineEvents.occurredAt)),
+      this.database
+        .select({
+          id: sourceEvents.id,
+          source: sourceEvents.source,
+          producerEvent: sourceEvents.producerEvent,
+          producerVersion: sourceEvents.producerVersion,
+          occurredAt: sourceEvents.occurredAt,
+          capturedAt: sourceEvents.capturedAt,
+          capturePath: sourceEvents.capturePath,
+          rawPayload: sourceEvents.rawPayload,
+        })
+        .from(sourceEvents)
+        .where(eq(sourceEvents.organizationId, organizationId))
+        .orderBy(asc(sourceEvents.occurredAt)),
     ]);
+    const sessionIdentity = new Set<string>([
+      row.canonicalSessionId,
+      ...turns.map((turn) => turn.canonicalTurnId),
+      ...agents.flatMap((agent) => [agent.publicId, agent.codexThreadId].filter(Boolean) as string[]),
+    ]);
+    const evidenceInputs: CodexEvidenceInput[] = retainedEvidence.flatMap((source) => {
+      const identities = sourceIdentityValues(source.rawPayload);
+      if (![...identities].some((identity) => sessionIdentity.has(identity))) return [];
+      return [
+        {
+          sourceEventId: source.id,
+          observation: {
+            source: source.source as CodexSource,
+            producer: { name: "codex" as const, version: source.producerVersion },
+            producerEvent: source.producerEvent,
+            occurredAt: source.occurredAt.toISOString(),
+            capturedAt: source.capturedAt.toISOString(),
+            capturePath: source.capturePath,
+            payload: source.rawPayload as Record<string, unknown>,
+          },
+        },
+      ];
+    });
+    const richEvidence = analyzeCodexEvidence(evidenceInputs, {
+      turns: turns.map((turn) => ({
+        id: turn.canonicalTurnId,
+        firstObservedAt: turn.firstObservedAt.toISOString(),
+        lastObservedAt: turn.lastObservedAt.toISOString(),
+      })),
+      priceTable: this.priceTable,
+    });
     return {
       session: toExecutionSession(row),
       activities: activities.map((activity) => ({
@@ -733,6 +823,7 @@ export class ExecutionStore {
         agentRunId: event.agentRunId,
         evidence: event.evidence as ExecutionSessionDetail["timeline"][number]["evidence"],
       })),
+      evidence: richEvidence,
     };
   }
 }

@@ -44,6 +44,7 @@ import {
   deviceCredentialOpenApiSecurityScheme,
   deviceCredentialSecuritySchemeName,
 } from "@workspace/contracts";
+import type { VersionedPriceTable } from "@workspace/agent-adapter";
 
 import { ExecutionStore } from "./execution-store.js";
 import { IdentityError, IdentityStore } from "./identity-store.js";
@@ -52,13 +53,16 @@ export interface BuildAppOptions {
   bootstrapCode?: string;
   databaseUrl?: string;
   onBootstrapCode?: (code: string) => void;
+  priceTable?: VersionedPriceTable;
 }
 
 export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   const identityStore = databaseUrl ? new IdentityStore(databaseUrl) : undefined;
-  const executionStore = databaseUrl ? new ExecutionStore(databaseUrl) : undefined;
+  const executionStore = databaseUrl
+    ? new ExecutionStore(databaseUrl, options.priceTable)
+    : undefined;
   let liveSequence = 0;
   const liveClients = new Set<NodeJS.WritableStream>();
 

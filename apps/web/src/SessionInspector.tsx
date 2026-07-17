@@ -18,6 +18,14 @@ function label(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1).replaceAll("_", " ");
 }
 
+function available(value: string | number | null) {
+  return value === null ? "Unavailable" : String(value);
+}
+
+function jsonEvidence(value: unknown) {
+  return value === null ? "Unavailable" : JSON.stringify(value, null, 2);
+}
+
 function EvidenceLabel({
   evidence,
 }: {
@@ -257,6 +265,152 @@ export function SessionInspector() {
                   </div>
                   <span>Agent run <code>{turn.agentRunId}</code></span>
                   <span>{formatDate(turn.firstObservedAt)} — {formatDate(turn.lastObservedAt)}</span>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-labelledby="tools-title">
+            <h3 id="tools-title">Tool evidence</h3>
+            <p className="section-note">
+              Hook and OTel identifiers remain separate. A coverage gap means the
+              source did not expose the fact; it does not mean the activity did not happen.
+            </p>
+            <div className="evidence-grid">
+              {detail.evidence.tools.length === 0 && (
+                <p className="unavailable-panel">Tool evidence unavailable for this Session.</p>
+              )}
+              {detail.evidence.tools.map((tool) => (
+                <article key={tool.id}>
+                  <div className="agent-title-row">
+                    <strong>{tool.toolName}</strong>
+                    <EvidenceLabel evidence={tool.evidence} />
+                  </div>
+                  <dl className="compact-facts">
+                    <div><dt>Hook id</dt><dd>{available(tool.identifiers.hookToolUseId)}</dd></div>
+                    <div><dt>OTel id</dt><dd>{available(tool.identifiers.otelCallId)}</dd></div>
+                    <div><dt>Outcome</dt><dd>{label(tool.outcome)}</dd></div>
+                    <div><dt>Approval</dt><dd>{label(tool.approval)}</dd></div>
+                    <div><dt>Duration</dt><dd>{tool.durationMs === null ? "Unavailable" : `${tool.durationMs} ms`}</dd></div>
+                    <div><dt>Retries</dt><dd>{available(tool.retryCount)}</dd></div>
+                  </dl>
+                  <details>
+                    <summary>Input and result evidence</summary>
+                    <pre>{jsonEvidence(tool.input)}</pre>
+                    <pre>{jsonEvidence(tool.result)}</pre>
+                  </details>
+                  {tool.coverageGaps.length > 0 && (
+                    <small>Coverage gaps: {tool.coverageGaps.map(label).join("; ")}</small>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-labelledby="usage-title">
+            <h3 id="usage-title">Token and Context evidence</h3>
+            <p className="section-note">
+              Token usage is provider-reported consumption. Context occupancy is a
+              separate inference from input Tokens and an emitted Context-window limit.
+            </p>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th><th>Model</th><th>Input</th><th>Cached input</th>
+                    <th>Output</th><th>Reasoning</th><th>Total</th><th>Turn association</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.evidence.tokenUsage.map((sample) => (
+                    <tr key={sample.id}>
+                      <td>{formatDate(sample.occurredAt)}</td>
+                      <td>{available(sample.model)}</td>
+                      <td>{available(sample.categories.input)}</td>
+                      <td>{available(sample.categories.cachedInput)}</td>
+                      <td>{available(sample.categories.output)}</td>
+                      <td>{available(sample.categories.reasoningOutput)}</td>
+                      <td>{available(sample.categories.total)}</td>
+                      <td>{label(sample.turnAssociation.strength)} · {sample.turnAssociation.method.replaceAll("_", " ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {detail.evidence.tokenUsage.length === 0 && (
+              <p className="unavailable-panel">Provider Token usage unavailable for this Session.</p>
+            )}
+            <div className="evidence-grid context-grid">
+              {detail.evidence.context.limits.map((limit, index) => (
+                <article key={`${limit.model ?? "unknown"}-${index}`}>
+                  <strong>Reported limits · {available(limit.model)}</strong>
+                  <span>Context window: {available(limit.contextWindow)} Tokens</span>
+                  <span>Auto-compaction: {available(limit.autoCompactionLimit)} Tokens</span>
+                  <EvidenceLabel evidence={limit.evidence} />
+                </article>
+              ))}
+              {detail.evidence.context.occupancy.map((item) => (
+                <article key={item.tokenUsageId}>
+                  <strong>
+                    {detail.evidence.context.firstRequestBaseline?.tokenUsageId === item.tokenUsageId
+                      ? "First-request Context baseline"
+                      : "Inferred Context occupancy"}
+                  </strong>
+                  <span>{item.occupancyTokens} Tokens · {item.occupancyPercent === null ? "percentage unavailable" : `${item.occupancyPercent}%`}</span>
+                  <span>Method: {item.method.replaceAll("_", " ")}</span>
+                  <small>{item.missingAssumptions.join(" ")}</small>
+                  <EvidenceLabel evidence={item.evidence} />
+                </article>
+              ))}
+              <article className="unavailable-panel">
+                <strong>Per-item Context contribution: {label(detail.evidence.context.contribution.status)}</strong>
+                <span>{detail.evidence.context.contribution.note}</span>
+                <span>Method: {detail.evidence.context.contribution.method.replaceAll("_", " ")}</span>
+              </article>
+            </div>
+          </section>
+
+          <section aria-labelledby="cost-title">
+            <h3 id="cost-title">Estimated cost</h3>
+            <p className="section-note">
+              These are API-equivalent estimates only. Provider-billed currency and
+              ChatGPT plan-credit accounting are not passively reported.
+            </p>
+            <div className="evidence-grid">
+              {detail.evidence.costEstimates.length === 0 && (
+                <p className="unavailable-panel">Cost unavailable because no Token sample was captured.</p>
+              )}
+              {detail.evidence.costEstimates.map((cost) => (
+                <article key={cost.tokenUsageId}>
+                  <strong>{cost.status === "estimated" ? `${cost.currency} ${cost.amount}` : "Estimate unavailable"}</strong>
+                  <span>Table: {available(cost.priceTableVersion)} · effective {available(cost.effectiveDate)}</span>
+                  <span>Model: {available(cost.modelMapping.observedModel)} → {available(cost.modelMapping.pricedModel)}</span>
+                  <small>{cost.reason ?? cost.billingCaveat}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-labelledby="lifecycle-title">
+            <h3 id="lifecycle-title">Lifecycle and capability evidence</h3>
+            <div className="plain-list lifecycle-list">
+              {detail.evidence.lifecycle.map((item) => (
+                <article key={item.id}>
+                  <strong>{label(item.kind)} · {label(item.event)}</strong>
+                  <span>{formatDate(item.occurredAt)}</span>
+                  <EvidenceLabel evidence={item.evidence} />
+                </article>
+              ))}
+            </div>
+            <div className="evidence-grid">
+              {detail.evidence.capabilities.map((capability) => (
+                <article key={capability.capability}>
+                  <div className="agent-title-row">
+                    <strong>{label(capability.capability)}</strong>
+                    <span className={`capability-state capability-${capability.state}`}>{label(capability.state)}</span>
+                  </div>
+                  <span>{capability.note}</span>
+                  <EvidenceLabel evidence={capability.evidence} />
                 </article>
               ))}
             </div>

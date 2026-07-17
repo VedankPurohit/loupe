@@ -69,7 +69,9 @@ The initial query surface is browser-session authenticated:
 - `GET /api/v1/sessions` lists canonical Session summaries.
 - `GET /api/v1/sessions/:id` returns the Session, Activity episodes, canonical
   Turns, Agent runs and parent reconciliation, and the chronological hook
-  timeline.
+  timeline. It also returns rich Tool/lifecycle, Token, Context, capability, and
+  cost evidence under `evidence`; the calculation and downgrade contract is in
+  [`session-evidence.md`](./session-evidence.md).
 
 Device credentials cannot browse either route. Diagnostic and browser clients
 must use these `/api/v1` routes and never PostgreSQL.
@@ -97,4 +99,6 @@ Codex `0.144.5` agent-communication evidence and retain the `unstable` stability
 label. Hook-only direct parentage may be inferred where there is one defensible
 candidate; ambiguous nested parentage remains unresolved. No logical model
 request identity, implicit skill activation, complete passive capability
-snapshot, or provider monetary cost is introduced by this projection.
+snapshot, or provider monetary cost is introduced by this projection. Optional
+cost remains a versioned local estimate; exact per-item Context contribution
+and unsupported composition charts remain unavailable.

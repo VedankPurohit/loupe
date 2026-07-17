@@ -326,12 +326,144 @@ export const TimelineEventSchema = z.object({
   agentRunId: z.string().nullable(),
   evidence: EvidenceSchema,
 });
+
+export const TurnAssociationSchema = z.object({
+  turnId: z.string().nullable(),
+  strength: z.enum(["exact", "exact_unstable", "inferred", "unavailable"]),
+  method: z.string().min(1),
+});
+
+export const ToolEvidenceSchema = z.object({
+  id: z.string().min(1),
+  toolName: z.string().min(1),
+  occurredAt: z.iso.datetime(),
+  identifiers: z.object({
+    hookToolUseId: z.string().nullable(),
+    otelCallId: z.string().nullable(),
+  }),
+  input: z.unknown().nullable(),
+  result: z.unknown().nullable(),
+  durationMs: z.number().nonnegative().nullable(),
+  outcome: z.enum(["success", "failure", "unknown"]),
+  approval: z.enum(["approved", "denied", "requested", "unavailable"]),
+  retryCount: z.number().int().nonnegative().nullable(),
+  turnAssociation: TurnAssociationSchema,
+  evidence: EvidenceSchema,
+  coverageGaps: z.array(z.string()),
+});
+
+export const LifecycleEvidenceSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["compaction", "resume", "fork", "skill", "mcp"]),
+  event: z.string().min(1),
+  occurredAt: z.iso.datetime(),
+  details: z.record(z.string(), z.unknown()),
+  turnAssociation: TurnAssociationSchema,
+  evidence: EvidenceSchema,
+});
+
+export const TokenUsageCategoriesSchema = z.object({
+  input: z.number().int().nonnegative().nullable(),
+  cachedInput: z.number().int().nonnegative().nullable(),
+  output: z.number().int().nonnegative().nullable(),
+  reasoningOutput: z.number().int().nonnegative().nullable(),
+  total: z.number().int().nonnegative().nullable(),
+});
+
+export const TokenUsageSampleSchema = z.object({
+  id: z.string().min(1),
+  occurredAt: z.iso.datetime(),
+  sourceKind: z.enum(["provider_completion", "turn_total"]),
+  model: z.string().nullable(),
+  serviceTier: z.string().nullable(),
+  categories: TokenUsageCategoriesSchema,
+  turnAssociation: TurnAssociationSchema,
+  evidence: EvidenceSchema,
+});
+
+export const ContextLimitSchema = z.object({
+  model: z.string().nullable(),
+  contextWindow: z.number().int().positive().nullable(),
+  autoCompactionLimit: z.number().int().positive().nullable(),
+  evidence: EvidenceSchema,
+});
+
+export const ContextOccupancySchema = z.object({
+  tokenUsageId: z.string().min(1),
+  occupancyTokens: z.number().int().nonnegative(),
+  occupancyPercent: z.number().nonnegative().nullable(),
+  method: z.literal("provider_input_tokens_over_reported_context_window"),
+  inputs: z.object({
+    inputTokens: z.number().int().nonnegative(),
+    contextWindow: z.number().int().positive().nullable(),
+  }),
+  missingAssumptions: z.array(z.string()),
+  evidence: EvidenceSchema,
+});
+
+export const ContextEvidenceSchema = z.object({
+  limits: z.array(ContextLimitSchema),
+  occupancy: z.array(ContextOccupancySchema),
+  firstRequestBaseline: ContextOccupancySchema.nullable(),
+  contribution: z.object({
+    status: z.enum(["estimated", "unavailable"]),
+    method: z.string().min(1),
+    note: z.string().min(1),
+    evidence: EvidenceSchema,
+  }),
+});
+
+export const CostEstimateSchema = z.object({
+  tokenUsageId: z.string().min(1),
+  status: z.enum(["estimated", "unavailable"]),
+  amount: z.number().nonnegative().nullable(),
+  currency: z.string().min(1).nullable(),
+  effectiveDate: z.string().min(1).nullable(),
+  priceTableVersion: z.string().min(1).nullable(),
+  modelMapping: z.object({
+    observedModel: z.string().nullable(),
+    pricedModel: z.string().nullable(),
+  }),
+  inputs: z.object({
+    uncachedInputTokens: z.number().int().nonnegative().nullable(),
+    cachedInputTokens: z.number().int().nonnegative().nullable(),
+    outputTokens: z.number().int().nonnegative().nullable(),
+    reasoningOutputTokens: z.number().int().nonnegative().nullable(),
+  }),
+  billingCaveat: z.string().min(1),
+  reason: z.string().min(1).nullable(),
+});
+
+export const CapabilityEvidenceSchema = z.object({
+  capability: z.enum([
+    "explicit_skill_mention",
+    "implicit_skill_activation",
+    "configured_mcp_servers",
+    "observed_mcp_use",
+    "complete_passive_capability_snapshot",
+    "fork",
+  ]),
+  state: z.enum(["observed", "inferred", "conditional", "unavailable"]),
+  note: z.string().min(1),
+  evidence: EvidenceSchema,
+});
+
+export const RichSessionEvidenceSchema = z.object({
+  tools: z.array(ToolEvidenceSchema),
+  lifecycle: z.array(LifecycleEvidenceSchema),
+  tokenUsage: z.array(TokenUsageSampleSchema),
+  context: ContextEvidenceSchema,
+  costEstimates: z.array(CostEstimateSchema),
+  capabilities: z.array(CapabilityEvidenceSchema),
+});
+
 export const ExecutionSessionDetailResponseSchema = z.object({
   session: ExecutionSessionSchema,
   activities: z.array(ActivityEpisodeSchema),
   turns: z.array(TurnSchema),
   agentRuns: z.array(AgentRunSchema),
   timeline: z.array(TimelineEventSchema),
+  evidence: RichSessionEvidenceSchema,
 });
 
 export const LiveExecutionEventSchema = z.object({
@@ -388,3 +520,11 @@ export type ExecutionSessionDetail = z.infer<
   typeof ExecutionSessionDetailResponseSchema
 >;
 export type LiveExecutionEvent = z.infer<typeof LiveExecutionEventSchema>;
+export type TurnAssociation = z.infer<typeof TurnAssociationSchema>;
+export type ToolEvidence = z.infer<typeof ToolEvidenceSchema>;
+export type LifecycleEvidence = z.infer<typeof LifecycleEvidenceSchema>;
+export type TokenUsageSample = z.infer<typeof TokenUsageSampleSchema>;
+export type ContextEvidence = z.infer<typeof ContextEvidenceSchema>;
+export type CostEstimate = z.infer<typeof CostEstimateSchema>;
+export type CapabilityEvidence = z.infer<typeof CapabilityEvidenceSchema>;
+export type RichSessionEvidence = z.infer<typeof RichSessionEvidenceSchema>;

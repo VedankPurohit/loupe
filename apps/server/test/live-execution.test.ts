@@ -58,6 +58,44 @@ function toOtelSourceEvent(record: OtelFixture["records"][number]) {
   });
 }
 
+function syntheticSourceEvent(options: {
+  source?: "codex_otel_log" | "codex_rollout";
+  producerEvent: string;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+}) {
+  const raw: CodexSourceObservation = {
+    source: options.source ?? "codex_otel_log",
+    producer: { name: "codex", version: "0.144.5" },
+    producerEvent: options.producerEvent,
+    occurredAt: options.occurredAt,
+    capturedAt: options.occurredAt,
+    capturePath: options.source === "codex_rollout" ? "rollout:key-only" : "otel:logs",
+    payload: options.payload,
+  };
+  return createCodexSourceEvent({
+    id: randomUUID(),
+    adapted: adaptCodexObservation(raw),
+    redaction: { policyVersion: 1, applied: false, evidence: [] },
+  });
+}
+
+function logPayload(attributes: Record<string, string | number | boolean>) {
+  return {
+    log_record: {
+      attributes: Object.entries(attributes).map(([key, value]) => ({
+        key,
+        value:
+          typeof value === "boolean"
+            ? { boolValue: value }
+            : typeof value === "number"
+              ? { intValue: String(value) }
+              : { stringValue: value },
+      })),
+    },
+  };
+}
+
 function attributeMap(record: OtelFixture["records"][number]) {
   return Object.fromEntries(
     record.log_record.attributes.map(({ key, value }) => [
@@ -115,6 +153,22 @@ describe.sequential("live execution projection through /api/v1", () => {
     let bootstrapCode: string | undefined;
     app = await buildApp({
       databaseUrl: testDatabase.databaseUrl,
+      priceTable: {
+        version: "fixture-prices-v1",
+        currency: "USD",
+        effectiveDate: "2026-07-01",
+        modelMappings: { "fixture-model": "fixture-priced-model" },
+        pricesPerMillionTokens: {
+          "fixture-priced-model": {
+            input: 2,
+            cachedInput: 0.5,
+            output: 8,
+            reasoningOutput: 12,
+          },
+        },
+        billingCaveat:
+          "API-equivalent estimate only; it is not a provider bill or ChatGPT plan-credit balance.",
+      },
       onBootstrapCode: (code) => {
         bootstrapCode = code;
       },
@@ -299,6 +353,184 @@ describe.sequential("live execution projection through /api/v1", () => {
       { headers: { cookie: browserCookie } },
     );
     expect(await afterReplay.json()).toEqual(detail);
+  });
+
+  it("exposes honest tool, lifecycle, Token, Context, capability, and cost evidence through /api/v1", async () => {
+    const events = [
+      syntheticSourceEvent({
+        producerEvent: "codex.conversation_starts",
+        occurredAt: "2026-07-17T10:36:29.000Z",
+        payload: logPayload({
+          "event.name": "codex.conversation_starts",
+          "conversation.id": "agent-run-probe-003",
+          model: "fixture-model",
+          context_window: 100000,
+          auto_compact_token_limit: 80000,
+          mcp_servers: "probe",
+        }),
+      }),
+      syntheticSourceEvent({
+        producerEvent: "codex.sse_event",
+        occurredAt: "2026-07-17T10:36:40.000Z",
+        payload: logPayload({
+          "event.name": "codex.sse_event",
+          "event.kind": "response.completed",
+          "conversation.id": "agent-run-probe-003",
+          model: "fixture-model",
+          input_token_count: 25000,
+          cached_token_count: 10000,
+          output_token_count: 2000,
+          reasoning_token_count: 500,
+          tool_token_count: 27000,
+        }),
+      }),
+      syntheticSourceEvent({
+        producerEvent: "codex.tool_decision",
+        occurredAt: "2026-07-17T10:36:40.100Z",
+        payload: logPayload({
+          "event.name": "codex.tool_decision",
+          "conversation.id": "agent-run-probe-003",
+          tool_name: "exec_command",
+          call_id: "tool-use-probe-001",
+          decision: "approved",
+        }),
+      }),
+      syntheticSourceEvent({
+        producerEvent: "codex.tool_result",
+        occurredAt: "2026-07-17T10:36:40.200Z",
+        payload: logPayload({
+          "event.name": "codex.tool_result",
+          "conversation.id": "agent-run-probe-003",
+          tool_name: "exec_command",
+          call_id: "tool-use-probe-001",
+          arguments: "<synthetic-content-redacted>",
+          output: "<synthetic-content-redacted>",
+          duration_ms: 51,
+          success: true,
+          mcp_server: "probe",
+        }),
+      }),
+      syntheticSourceEvent({
+        source: "codex_rollout",
+        producerEvent: "session_meta",
+        occurredAt: "2026-07-17T10:36:40.300Z",
+        payload: {
+          session_id: "session-probe-001",
+          thread_source: "user",
+          forked_from_id: "session-probe-parent",
+          parent_thread_id: null,
+        },
+      }),
+    ];
+    expect((await deliver(baseUrl, deviceCredential, events)).status).toBe(200);
+
+    const response = await fetch(`${baseUrl}/api/v1/sessions/session-probe-001`, {
+      headers: { cookie: browserCookie },
+    });
+    expect(response.status).toBe(200);
+    const detail = (await response.json()) as {
+      evidence: {
+        tools: Array<Record<string, unknown>>;
+        lifecycle: Array<Record<string, unknown>>;
+        tokenUsage: Array<Record<string, unknown>>;
+        context: Record<string, unknown>;
+        costEstimates: Array<Record<string, unknown>>;
+        capabilities: Array<Record<string, unknown>>;
+      };
+    };
+    expect(detail.evidence.tokenUsage).toEqual([
+      expect.objectContaining({
+        sourceKind: "provider_completion",
+        categories: {
+          input: 25000,
+          cachedInput: 10000,
+          output: 2000,
+          reasoningOutput: 500,
+          total: 27000,
+        },
+        turnAssociation: {
+          turnId: "turn-probe-001",
+          strength: "inferred",
+          method: "log_time_within_canonical_turn",
+        },
+      }),
+    ]);
+    expect(detail.evidence.context).toMatchObject({
+      limits: [
+        expect.objectContaining({
+          model: "fixture-model",
+          contextWindow: 100000,
+          autoCompactionLimit: 80000,
+        }),
+      ],
+      occupancy: [
+        expect.objectContaining({
+          occupancyTokens: 25000,
+          occupancyPercent: 25,
+          method: "provider_input_tokens_over_reported_context_window",
+        }),
+      ],
+      firstRequestBaseline: expect.objectContaining({ occupancyTokens: 25000 }),
+      contribution: expect.objectContaining({ status: "unavailable" }),
+    });
+    expect(detail.evidence.costEstimates).toEqual([
+      expect.objectContaining({
+        status: "estimated",
+        amount: 0.057,
+        currency: "USD",
+        effectiveDate: "2026-07-01",
+        priceTableVersion: "fixture-prices-v1",
+        modelMapping: {
+          observedModel: "fixture-model",
+          pricedModel: "fixture-priced-model",
+        },
+        billingCaveat:
+          "API-equivalent estimate only; it is not a provider bill or ChatGPT plan-credit balance.",
+      }),
+    ]);
+    expect(detail.evidence.tools).toContainEqual(
+      expect.objectContaining({
+        toolName: "Bash",
+        identifiers: {
+          hookToolUseId: "tool-use-probe-001",
+          otelCallId: "tool-use-probe-001",
+        },
+        durationMs: 51,
+        outcome: "success",
+        approval: "approved",
+        retryCount: null,
+        coverageGaps: expect.arrayContaining([
+          "retry_count_unavailable",
+          "tool_name_differs_across_sources",
+        ]),
+      }),
+    );
+    expect(detail.evidence.lifecycle).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "compaction", event: "PreCompact" }),
+        expect.objectContaining({ kind: "resume", event: "SessionStart" }),
+        expect.objectContaining({ kind: "fork", event: "user_fork_lineage" }),
+        expect.objectContaining({ kind: "mcp", event: "tool_used" }),
+      ]),
+    );
+    expect(detail.evidence.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capability: "implicit_skill_activation",
+          state: "unavailable",
+        }),
+        expect.objectContaining({
+          capability: "complete_passive_capability_snapshot",
+          state: "unavailable",
+        }),
+        expect.objectContaining({ capability: "fork", state: "observed" }),
+        expect.objectContaining({
+          capability: "configured_mcp_servers",
+          state: "observed",
+        }),
+        expect.objectContaining({ capability: "observed_mcp_use", state: "observed" }),
+      ]),
+    );
   });
 
   it("streams ordered authenticated invalidations and recovers through an ordinary query", async () => {

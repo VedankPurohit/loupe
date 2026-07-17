@@ -125,6 +125,28 @@ The interactive process was terminated only after the hook lifecycle stopped.
 | Capability snapshot | unavailable | Configured MCP server names and tools actually used are evidence, not a complete passive built-in/MCP/skill/plugin snapshot. |
 | Provider monetary cost | unavailable | No currency or billed amount was emitted. Any future cost is a separately labelled estimate with a versioned price table and billing caveat. |
 
+### Ticket 08 projection decision
+
+The `/api/v1` rich-evidence projection now preserves provider completion input,
+cached-input, output, reasoning-output, and total categories independently.
+Log-only completion-to-Turn association remains inferred; source-defined trace
+association is exact but unstable. Context occupancy is calculated only as
+reported input Tokens over the reported Context-window limit, with the method,
+inputs, assumptions, and first defensible baseline returned explicitly. Exact
+serialized Context and per-item contribution remain unavailable, so no
+composition chart is populated.
+
+Tool input/result, duration, outcome, approval, retry, identifiers, and coverage
+gaps remain independent. Compaction/resume, version-gated fork, explicit or
+inferred Skill evidence, configured or used MCP evidence, and unavailable
+implicit activation/passive inventory are returned as distinct evidence.
+
+Cost is produced only from an explicitly supplied versioned external price
+table with currency, effective date, model mapping, category inputs, and a
+billing caveat. This repository does not invent a price mapping for the
+observed `gpt-5.6-sol` model; without one, the API returns an unavailable
+estimate with the reason.
+
 ## Observed payload contract
 
 ### Lifecycle hooks

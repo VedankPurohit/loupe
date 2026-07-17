@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
-    "pretest": "pnpm --filter @workspace/contracts build && pnpm --filter @workspace/database build && pnpm --filter @workspace/relay build && pnpm run build",
+    "pretest": "pnpm --filter @workspace/contracts build && pnpm --filter @workspace/database build && pnpm --filter @workspace/agent-adapter build && pnpm --filter @workspace/relay build && pnpm run build",
     "start": "node dist/main.js",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -14,6 +14,7 @@
   "dependencies": {
     "@fastify/cookie": "11.0.2",
     "@fastify/swagger": "9.5.1",
+    "@workspace/agent-adapter": "workspace:*",
     "@workspace/contracts": "workspace:*",
     "@workspace/database": "workspace:*",
     "drizzle-orm": "0.44.3",
@@ -23,7 +24,6 @@
     "zod": "4.0.10"
   },
   "devDependencies": {
-    "@workspace/agent-adapter": "workspace:*",
     "@workspace/relay": "workspace:*",
     "@types/node": "24.0.15",
     "tsx": "4.20.3",

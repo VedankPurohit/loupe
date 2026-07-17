@@ -29,3 +29,14 @@ The inspector keeps the API distinctions visible:
   by the API.
 - Live, idle, and resumed are Activity states. Permanent completion is explicitly
   not assumed.
+- Tool input/result, duration, outcome, approval, retry, identifier, and coverage
+  fields are shown independently; unavailable is never rendered as zero or no
+  activity.
+- Provider Token categories are tabular and separate from the explicitly
+  inferred Context occupancy and first-request baseline. The inspector does not
+  render an unsupported Context-composition chart.
+- Cost cards always carry estimate/unavailable state, price-table metadata,
+  model mapping, inputs, and billing caveat from `/api/v1`.
+- Compaction, resume, version-gated fork, explicit/inferred Skill evidence,
+  configured/used MCP evidence, and unavailable implicit/passive inventory
+  capabilities remain distinct.
