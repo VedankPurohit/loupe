@@ -18,9 +18,9 @@ afterEach(async () => {
   );
 });
 
-async function runCli(args: string[]) {
+async function runCli(args: string[], env: Record<string, string> = {}) {
   const child = spawn(process.execPath, [cliPath, ...args], {
-    env: { ...process.env, NO_COLOR: "1" },
+    env: { ...process.env, NO_COLOR: "1", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -35,6 +35,43 @@ async function runCli(args: string[]) {
 }
 
 describe("spawned diagnostic CLI", () => {
+  it("uses a codename-neutral interface without token-valued argv flags", async () => {
+    const help = await runCli(["--help"]);
+    expect(help).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(help.stdout).toContain("coding-agent-analysis");
+    expect(help.stdout).toContain("--analysis-credential-file <path|->");
+    expect(help.stdout).toContain("--browser-session-file <path|->");
+    expect(help.stdout).not.toContain("loupe-diagnostic");
+    expect(help.stdout).not.toContain("LOUPE_");
+    expect(help.stdout).not.toContain("--analysis-credential <token>");
+    expect(help.stdout).not.toContain("--browser-session <token>");
+
+    const legacy = await runCli([
+      "inspect",
+      "session-real-001",
+      "--analysis-credential",
+      "analysis_secret",
+    ]);
+    expect(legacy.exitCode).toBe(2);
+    expect(legacy.stderr).toContain(
+      "SECRET_ARG_REJECTED: --analysis-credential is unsafe because process arguments may be visible",
+    );
+    expect(legacy.stderr).not.toContain("analysis_secret");
+  });
+
+  it("requires HTTPS for non-loopback servers", async () => {
+    const result = await runCli([
+      "inspect",
+      "session-real-001",
+      "--server-url",
+      "http://observability.example.test",
+    ]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(
+      "SERVER_URL_INSECURE: HTTPS is required unless the server is localhost, 127.0.0.1, or ::1.",
+    );
+  });
+
   it("inspects the canonical Session through /api/v1 and exposes execution evidence", async () => {
     let requestedUrl: string | undefined;
     let requestedCookie: string | undefined;
@@ -181,9 +218,7 @@ describe("spawned diagnostic CLI", () => {
       "session-real-001",
       "--server-url",
       `http://127.0.0.1:${address.port}`,
-      "--browser-session",
-      "test-session-token",
-    ]);
+    ], { CODING_AGENT_OBSERVABILITY_BROWSER_SESSION: "test-session-token" });
 
     expect(result).toMatchObject({ exitCode: 0, stderr: "" });
     expect(requestedUrl).toBe("/api/v1/sessions/session-real-001");
@@ -281,9 +316,7 @@ describe("spawned diagnostic CLI", () => {
       "The selected Turns used the same workflow.",
       "--server-url",
       `http://127.0.0.1:${address.port}`,
-      "--browser-session",
-      "test-session-token",
-    ]);
+    ], { CODING_AGENT_OBSERVABILITY_BROWSER_SESSION: "test-session-token" });
 
     expect(result).toMatchObject({ exitCode: 0, stderr: "" });
     expect(requestedUrl).toBe("/api/v1/comparisons");

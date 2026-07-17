@@ -48,6 +48,12 @@ describe("GET /api/v1", () => {
             security: [{ browserSession: [] }],
           },
         },
+        "/api/v1/session/logout": {
+          post: {
+            security: [{ browserSession: [] }],
+            responses: { "204": {}, "401": {} },
+          },
+        },
       },
       components: {
         securitySchemes: {

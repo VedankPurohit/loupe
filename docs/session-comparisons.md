@@ -52,10 +52,10 @@ citation; comparison completeness reports that gap.
 Select a complete Session with its id, or a Turn with `session-id:turn-id`:
 
 ```bash
-loupe-diagnostic compare session-a:turn-a session-b:turn-b \
+coding-agent-analysis compare session-a:turn-a session-b:turn-b \
   --claim "The selected Turns used the same workflow."
 
-loupe-diagnostic compare session-a session-b \
+coding-agent-analysis compare session-a session-b \
   --kind causal \
   --signals token_usage,duration,tool_count,model_choice,correlation \
   --claim "The lower-duration workflow caused the outcome." \

@@ -22,7 +22,7 @@ describe("Analysis skill evidence scenarios", () => {
 
     expect(skill).toContain("Use only the Analysis CLI as the evidence source.");
     for (const command of ["search", "inspect", "compare", "cite", "watch"]) {
-      expect(skill).toContain(`loupe-diagnostic ${command}`);
+      expect(skill).toContain(`coding-agent-analysis ${command}`);
     }
     expect(skill).toContain("Resolve every supporting citation");
     expect(skill).toContain("State uncertainty beside every conclusion.");

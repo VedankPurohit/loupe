@@ -331,6 +331,21 @@ export class IdentityStore {
     };
   }
 
+  async revokeSession(token: string): Promise<boolean> {
+    const [revoked] = await this.database
+      .update(browserSessions)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(browserSessions.tokenDigest, digestSessionToken(token)),
+          isNull(browserSessions.revokedAt),
+          gt(browserSessions.expiresAt, new Date()),
+        ),
+      )
+      .returning({ id: browserSessions.id });
+    return revoked !== undefined;
+  }
+
   async createAnalysisCredential(
     memberId: string,
     input: AnalysisCredentialCreateRequest,

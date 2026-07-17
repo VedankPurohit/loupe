@@ -101,15 +101,18 @@ or database passwords.
 | `POSTGRES_DB` | Compose | Database name, default `agent_observer`. |
 | `POSTGRES_USER` | Compose | Database user, default `agent_observer`. |
 | `POSTGRES_PASSWORD` | Compose | Database password, default `agent_observer`; change it outside disposable local use. |
-| `LOUPE_SERVER_URL` | Analysis CLI | API base URL, default `http://127.0.0.1:3000`. |
-| `LOUPE_ANALYSIS_CREDENTIAL` | Analysis CLI | Revocable bearer credential for evidence read and Candidate submission. |
-| `LOUPE_BROWSER_SESSION` | Human CLI actions | Value of the authenticated `browser_session` cookie. Treat it as a secret. |
+| `CODING_AGENT_OBSERVABILITY_SERVER_URL` | Analysis CLI | API base URL, default `http://127.0.0.1:3000`. Remote URLs require HTTPS. |
+| `CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL` | Analysis CLI | Revocable bearer credential for evidence read and Candidate submission. |
+| `CODING_AGENT_OBSERVABILITY_BROWSER_SESSION` | Human CLI actions | Value of the authenticated `browser_session` cookie. Treat it as a secret. |
 | `CODEX_HOME` | Relay setup | Codex configuration root, default `~/.codex`. |
 
 Host port overrides affect the browser or host-side CLI URL, not the API's
 container port. The packaged Compose ports bind to `127.0.0.1` by default.
 A network deployment therefore needs an intentional Compose override and an
 HTTPS-terminating reverse proxy; enroll devices with the API URL they can reach.
+Both CLIs also accept protected credential files (`--browser-session-file` and
+`--analysis-credential-file`) with mode `0600`, or `-` for stdin. They reject
+token-valued process arguments.
 Choose the `POSTGRES_*` identity before the first volume initialization and keep
 it stable. Changing those variables later does not rename an existing database
 or role inside `postgres-data`.
@@ -212,14 +215,14 @@ preview every change, then explicitly apply it:
 
 ```bash
 pnpm --filter @workspace/relay build
-node packages/relay/dist/cli.js setup \
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js setup \
   --server-url http://127.0.0.1:3000 \
-  --browser-session "$LOUPE_BROWSER_SESSION" \
   --device-name "Development Mac"
 
-node packages/relay/dist/cli.js setup \
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js setup \
   --server-url http://127.0.0.1:3000 \
-  --browser-session "$LOUPE_BROWSER_SESSION" \
   --device-name "Development Mac" \
   --yes
 ```
@@ -238,10 +241,10 @@ and local state available. Uninstall removes the service and queue and restores
 the exact pre-setup Codex file bytes. Both preserve accepted server history:
 
 ```bash
-node packages/relay/dist/cli.js disconnect \
-  --browser-session "$LOUPE_BROWSER_SESSION"
-node packages/relay/dist/cli.js uninstall \
-  --browser-session "$LOUPE_BROWSER_SESSION"
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js disconnect
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js uninstall
 ```
 
 Read [macOS Codex capture setup](macos-codex-setup.md) before using non-default
@@ -252,7 +255,7 @@ configuration conflicts.
 
 Build the CLI from the checkout. The exact repository-local invocation is shown
 below; later examples in behavior-specific documents use its bin name
-`loupe-diagnostic` for readability.
+`coding-agent-analysis` for readability.
 
 ```bash
 pnpm --filter @workspace/diagnostic-cli build
@@ -263,12 +266,13 @@ A signed-in human creates an Analysis credential with the value of their
 browser-session cookie, then uses the returned one-time plaintext token:
 
 ```bash
-node apps/diagnostic-cli/dist/cli.js credential create \
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node apps/diagnostic-cli/dist/cli.js credential create \
   --name "Organization analyst" \
-  --browser-session "$LOUPE_BROWSER_SESSION" --json
+  --json
 
-export LOUPE_SERVER_URL=http://127.0.0.1:3000
-export LOUPE_ANALYSIS_CREDENTIAL=analysis_REDACTED
+export CODING_AGENT_OBSERVABILITY_SERVER_URL=http://127.0.0.1:3000
+export CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL=analysis_REDACTED
 node apps/diagnostic-cli/dist/cli.js search --query compilation --json
 node apps/diagnostic-cli/dist/cli.js inspect SESSION_ID --json
 ```

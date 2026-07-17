@@ -9,7 +9,7 @@ pnpm --filter @workspace/diagnostic-cli build
 node apps/diagnostic-cli/dist/cli.js --help
 ```
 
-The examples below use the package bin name `loupe-diagnostic`. From an
+The examples below use the package bin name `coding-agent-analysis`. From an
 uninstalled checkout, replace that name with
 `node apps/diagnostic-cli/dist/cli.js`. There is no published global CLI package
 in this repository.
@@ -19,26 +19,33 @@ in this repository.
 Credential management is a human action authenticated by the member's browser Session. The plaintext credential is returned only on creation; PostgreSQL stores its SHA-256 digest.
 
 ```bash
-loupe-diagnostic credential create --name "Organization analyst" \
-  --server-url http://127.0.0.1:3000 \
-  --browser-session "$LOUPE_BROWSER_SESSION" --json
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  coding-agent-analysis credential create --name "Organization analyst" \
+  --server-url http://127.0.0.1:3000 --json
 
-loupe-diagnostic credential list --json
-loupe-diagnostic credential revoke ANALYSIS_CREDENTIAL_ID
+coding-agent-analysis credential list --json
+coding-agent-analysis credential revoke ANALYSIS_CREDENTIAL_ID
 ```
 
 Set the returned value for investigation commands:
 
 ```bash
-export LOUPE_SERVER_URL=http://127.0.0.1:3000
-export LOUPE_ANALYSIS_CREDENTIAL=analysis_REDACTED
+export CODING_AGENT_OBSERVABILITY_SERVER_URL=http://127.0.0.1:3000
+export CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL=analysis_REDACTED
 ```
 
 Revocation is immediate. Later requests return the stable `ANALYSIS_CREDENTIAL_REQUIRED` envelope. Revocation does not delete accepted evidence, previously submitted Candidate versions, or reviewer history.
 
-`LOUPE_BROWSER_SESSION` is the value of the HttpOnly `browser_session` cookie,
+`CODING_AGENT_OBSERVABILITY_BROWSER_SESSION` is the value of the HttpOnly `browser_session` cookie,
 not an Analysis or Device token. Treat it as a secret, keep it out of shell
-history where practical, and unset it after credential management.
+history, and unset it after credential management. Automation may instead use
+`--browser-session-file PATH` or `--analysis-credential-file PATH`; the CLI
+requires regular files with mode `0600`. Use `-` to read one credential from
+stdin. Token-valued argv flags are rejected because other local processes may
+be able to inspect command arguments.
+
+Cleartext HTTP is accepted only for `localhost`, `127.0.0.1`, and `::1`.
+Every remote Analysis endpoint must use HTTPS.
 
 An Analysis credential cannot change Session annotations or retained evidence; approve, publish, pause, or roll back a standard; or call Device capture ingestion. These return `ANALYSIS_CREDENTIAL_SCOPE_FORBIDDEN` even when the credential belongs to an Administrator. A Device credential remains separately forbidden from Organization evidence and Candidate submission.
 
@@ -47,12 +54,12 @@ An Analysis credential cannot change Session annotations or retained evidence; a
 Commands default to human output and accept `--json` for stable contract output:
 
 ```bash
-loupe-diagnostic search --query compilation --page 1 --page-size 25 --json
-loupe-diagnostic inspect SESSION_ID --json
-loupe-diagnostic compare SESSION_A:TURN_A SESSION_B:TURN_B \
+coding-agent-analysis search --query compilation --page 1 --page-size 25 --json
+coding-agent-analysis inspect SESSION_ID --json
+coding-agent-analysis compare SESSION_A:TURN_A SESSION_B:TURN_B \
   --claim "Both Turns used the captured workflow." --json
-loupe-diagnostic cite SESSION_ID:TURN_ID:ACTIVITY_UUID --json
-loupe-diagnostic watch --json
+coding-agent-analysis cite SESSION_ID:TURN_ID:ACTIVITY_UUID --json
+coding-agent-analysis watch --json
 ```
 
 Search returns explicit `page`, `pageSize`, `total`, `hasMore`, and `nextPage`. It excludes Seeded Sessions by default and reports `syntheticInclusion`; `--include-seeded` is explicit. Inspection preserves stable ids, browser deep links, synthetic designation, evidence stability/derivation, and unavailable values. Comparison returns population and completeness metadata, stable refusal reasons, citation links, and the one-real-Turn versus two-real-Turn classification. `cite` resolves both the Turn and exact retained activity and reports fidelity plus absolute API/browser links. Structured watch output is newline-delimited JSON; `--max-events N` bounds automation.
@@ -71,7 +78,7 @@ Use the companion skill at `skills/analyze-organization-evidence`. Its Candidate
 - an exact SHA-256 artifact hash.
 
 ```bash
-loupe-diagnostic candidate submit candidate.json --json
+coding-agent-analysis candidate submit candidate.json --json
 ```
 
 Start from the complete reference manifest at

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "loupe-diagnostic": "./dist/cli.js"
+    "coding-agent-analysis": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

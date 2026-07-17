@@ -131,6 +131,7 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
     });
     expect(credential.statusCode).toBe(201);
     analysisCredential = credential.json().credential as string;
+    process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL = analysisCredential;
     analysisCredentialId = credential.json().analysisCredential.id as string;
     temporaryDirectory = await mkdtemp(join(tmpdir(), "loupe-analysis-candidate-"));
     await app.listen({ host: "127.0.0.1", port: 0 });
@@ -140,6 +141,7 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
   });
 
   afterAll(async () => {
+    delete process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
     await app?.close();
     await testDatabase.drop();
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -157,8 +159,6 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
       "--json",
       "--server-url",
       serverUrl,
-      "--analysis-credential",
-      analysisCredential,
     ]);
     expect(search).toMatchObject({ exitCode: 0, stderr: "" });
     expect(JSON.parse(search.stdout)).toMatchObject({
@@ -178,8 +178,6 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
       "--json",
       "--server-url",
       serverUrl,
-      "--analysis-credential",
-      analysisCredential,
     ]);
     expect(inspected).toMatchObject({ exitCode: 0, stderr: "" });
     expect(JSON.parse(inspected.stdout)).toMatchObject({
@@ -205,8 +203,6 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
       "--json",
       "--server-url",
       serverUrl,
-      "--analysis-credential",
-      analysisCredential,
     ]);
     expect(comparison).toMatchObject({ exitCode: 0, stderr: "" });
     const comparisonBody = JSON.parse(comparison.stdout);
@@ -222,8 +218,6 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
       "--json",
       "--server-url",
       serverUrl,
-      "--analysis-credential",
-      analysisCredential,
     ]);
     expect(cited).toMatchObject({ exitCode: 0, stderr: "" });
     expect(JSON.parse(cited.stdout)).toMatchObject({
@@ -317,8 +311,6 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
       "--json",
       "--server-url",
       serverUrl,
-      "--analysis-credential",
-      analysisCredential,
     ]);
     expect(submitted).toMatchObject({ exitCode: 0, stderr: "" });
     expect(JSON.parse(submitted.stdout)).toMatchObject({
@@ -396,8 +388,6 @@ describe.sequential("revocable Analysis credential and real CLI", () => {
       "--json",
       "--server-url",
       serverUrl,
-      "--analysis-credential",
-      analysisCredential,
     ]);
     expect(denied.exitCode).toBe(1);
     expect(JSON.parse(denied.stderr)).toMatchObject({

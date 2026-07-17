@@ -127,11 +127,11 @@ or the canary into a committed file.
 ```bash
 APP_PORT=3316 WEB_PORT=8116 docker compose --project-name loupe-ticket16 up --build --wait
 pnpm --filter @workspace/relay build
-node packages/relay/dist/cli.js setup --server-url http://127.0.0.1:3316 --browser-session "$LOUPE_BROWSER_SESSION"
-node packages/relay/dist/cli.js setup --server-url http://127.0.0.1:3316 --browser-session "$LOUPE_BROWSER_SESSION" --yes
+node packages/relay/dist/cli.js setup --server-url http://127.0.0.1:3316
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" node packages/relay/dist/cli.js setup --server-url http://127.0.0.1:3316 --yes
 npx -y @openai/codex@0.144.5 exec --json --dangerously-bypass-hook-trust "<harmless demo prompt>"
-SERVER_URL=http://127.0.0.1:3316 WEB_URL=http://127.0.0.1:8116 SESSION_ID="$SESSION_ID" BROWSER_SESSION="$LOUPE_BROWSER_SESSION" scripts/first-day-checkpoint.sh
+SERVER_URL=http://127.0.0.1:3316 WEB_URL=http://127.0.0.1:8116 SESSION_ID="$SESSION_ID" BROWSER_SESSION="$BROWSER_SESSION" scripts/first-day-checkpoint.sh
 pnpm --filter @workspace/relay test -- runtime.test.ts
-node packages/relay/dist/cli.js uninstall --browser-session "$LOUPE_BROWSER_SESSION"
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" node packages/relay/dist/cli.js uninstall
 docker compose --project-name loupe-ticket16 down --volumes --remove-orphans
 ```

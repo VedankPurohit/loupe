@@ -1,6 +1,6 @@
 # Diagnostic CLI
 
-`loupe-diagnostic` is the plain Analysis CLI. It searches, inspects, watches,
+`coding-agent-analysis` is the plain Analysis CLI. It searches, inspects, watches,
 compares, and cites canonical evidence through `/api/v1`, and submits complete
 Candidate skills. It does not connect to PostgreSQL or import server code.
 
@@ -11,10 +11,11 @@ browser Session, then keep the returned bearer value in the environment.
 
 ```bash
 pnpm --filter @workspace/diagnostic-cli build
-pnpm --filter @workspace/diagnostic-cli diagnostic credential create \
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION='<browser-session>' \
+  pnpm --filter @workspace/diagnostic-cli diagnostic credential create \
   --name "Organization analyst" --json
-LOUPE_SERVER_URL=http://127.0.0.1:3000 \
-  LOUPE_ANALYSIS_CREDENTIAL='<analysis-credential>' \
+CODING_AGENT_OBSERVABILITY_SERVER_URL=http://127.0.0.1:3000 \
+  CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL='<analysis-credential>' \
   pnpm --filter @workspace/diagnostic-cli diagnostic inspect '<session-id>'
 ```
 
@@ -27,9 +28,14 @@ entry point directly:
 
 ```bash
 pnpm --filter @workspace/diagnostic-cli exec tsx src/cli.ts inspect '<session-id>' \
-  --server-url http://127.0.0.1:3000 \
-  --analysis-credential '<analysis-credential>'
+  --server-url http://127.0.0.1:3000
 ```
+
+For file-based automation, store either credential in a regular file with mode
+`0600` and use `--analysis-credential-file PATH` or
+`--browser-session-file PATH`; pass `-` to read one credential from stdin.
+Token-valued legacy flags are rejected because process arguments may be visible.
+Non-loopback server URLs must use HTTPS.
 
 The command exits `0` on a valid Session response, `1` for HTTP/API/contract
 failures, and `2` for invalid arguments. It never treats inactivity, a Stop

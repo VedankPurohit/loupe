@@ -246,6 +246,17 @@ export function App() {
     await loadDevices();
   }
 
+  async function logout() {
+    setFormError(undefined);
+    const response = await fetch("/api/v1/session/logout", { method: "POST" });
+    if (!response.ok) {
+      setFormError("The browser session could not be revoked. Try again.");
+      return;
+    }
+    setDevices([]);
+    setView({ kind: "established" });
+  }
+
   return (
     <main className="shell">
       <header className="brand">
@@ -307,6 +318,14 @@ export function App() {
               Your authenticated browser session is active. Manage capture for
               your enrolled Macs below.
             </p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void logout()}
+            >
+              Log out
+            </button>
+            {formError && <p role="alert" className="error">{formError}</p>}
           </section>
 
           <SessionInspector member={view.session.member} />

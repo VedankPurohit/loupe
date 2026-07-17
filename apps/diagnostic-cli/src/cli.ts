@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
 import {
   AnalysisCredentialCreateResponseSchema,
@@ -23,21 +23,23 @@ import {
 } from "@workspace/contracts";
 
 const usage = `Usage:
-  loupe-diagnostic inspect <session-id> [--json] --server-url <url> --analysis-credential <token>
-  loupe-diagnostic search [--query <text>] [--member <id>] [--repository <text>] [--include-seeded] [--page <n>] [--page-size <n>] [--json] --server-url <url> --analysis-credential <token>
-  loupe-diagnostic compare <session-id[:turn-id]>... --claim <statement> [--kind pattern|outcome|causal|productivity] [--include-seeded] [--json] --server-url <url> --analysis-credential <token>
-  loupe-diagnostic cite <session-id:turn-id:activity-id> [--json] --server-url <url> --analysis-credential <token>
-  loupe-diagnostic candidate submit <manifest.json> [--json] --server-url <url> --analysis-credential <token>
-  loupe-diagnostic watch [--max-events <n>] [--json] --server-url <url> --analysis-credential <token>
-  loupe-diagnostic credential create --name <label> [--json] --server-url <url> --browser-session <token>
-  loupe-diagnostic credential list [--json] --server-url <url> --browser-session <token>
-  loupe-diagnostic credential revoke <credential-id> --server-url <url> --browser-session <token>
-  loupe-diagnostic examples import starter-v1 --server-url <url> --browser-session <token>
+  coding-agent-analysis inspect <session-id> [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis search [--query <text>] [--member <id>] [--repository <text>] [--include-seeded] [--page <n>] [--page-size <n>] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis compare <session-id[:turn-id]>... --claim <statement> [--kind pattern|outcome|causal|productivity] [--include-seeded] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis cite <session-id:turn-id:activity-id> [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis candidate submit <manifest.json> [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis watch [--max-events <n>] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis credential create --name <label> [--json] [--server-url <url>] [--browser-session-file <path|->]
+  coding-agent-analysis credential list [--json] [--server-url <url>] [--browser-session-file <path|->]
+  coding-agent-analysis credential revoke <credential-id> [--server-url <url>] [--browser-session-file <path|->]
+  coding-agent-analysis examples import starter-v1 [--server-url <url>] [--browser-session-file <path|->]
 
 Environment alternatives:
-  LOUPE_SERVER_URL       Server base URL (default: http://127.0.0.1:3000)
-  LOUPE_ANALYSIS_CREDENTIAL  Revocable Analysis credential
-  LOUPE_BROWSER_SESSION  Value of the browser_session cookie`;
+  CODING_AGENT_OBSERVABILITY_SERVER_URL            Server base URL (default: http://127.0.0.1:3000)
+  CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL   Revocable Analysis credential
+  CODING_AGENT_OBSERVABILITY_BROWSER_SESSION       Value of the browser_session cookie
+
+Credential files must be regular files with mode 0600. Use - to read one credential from stdin.`;
 
 interface Authentication {
   analysisCredential?: string;
@@ -61,6 +63,69 @@ function readValue(args: string[], index: number, flag: string): string {
 
 class UsageError extends Error {}
 
+const secretFileFlags = new Map([
+  ["--analysis-credential-file", "CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL"],
+  ["--browser-session-file", "CODING_AGENT_OBSERVABILITY_BROWSER_SESSION"],
+] as const);
+
+function rejectLegacySecretArguments(args: string[]): void {
+  for (const flag of ["--analysis-credential", "--browser-session"] as const) {
+    if (args.some((argument) => argument === flag || argument.startsWith(`${flag}=`))) {
+      const replacement = `${flag}-file`;
+      throw new UsageError(
+        `SECRET_ARG_REJECTED: ${flag} is unsafe because process arguments may be visible. Use ${replacement} PATH (mode 0600), ${replacement} - for stdin, or the documented CODING_AGENT_OBSERVABILITY_* environment variable.`,
+      );
+    }
+  }
+}
+
+async function readSecretInput(path: string, label: string): Promise<string> {
+  let content: string;
+  if (path === "-") {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+    content = Buffer.concat(chunks).toString("utf8");
+  } else {
+    const metadata = await stat(path);
+    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
+      throw new UsageError(
+        `SECRET_FILE_PERMISSIONS: ${label} file must be a regular file readable only by its owner (mode 0600).`,
+      );
+    }
+    content = await readFile(path, "utf8");
+  }
+  const secret = content.trim();
+  if (!secret) throw new UsageError(`SECRET_INPUT_EMPTY: ${label} input was empty.`);
+  return secret;
+}
+
+async function normalizeCredentialInputs(args: string[]): Promise<string[]> {
+  rejectLegacySecretArguments(args);
+  const normalized: string[] = [];
+  let stdinCredential = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index]!;
+    const environmentName = secretFileFlags.get(
+      flag as "--analysis-credential-file" | "--browser-session-file",
+    );
+    if (!environmentName) {
+      normalized.push(flag);
+      continue;
+    }
+    const path = readValue(args, index, flag);
+    if (path === "-" && stdinCredential) {
+      throw new UsageError("Only one credential can be read from stdin per command.");
+    }
+    stdinCredential ||= path === "-";
+    process.env[environmentName] = await readSecretInput(
+      path,
+      flag === "--analysis-credential-file" ? "Analysis credential" : "browser Session",
+    );
+    index += 1;
+  }
+  return normalized;
+}
+
 class ApiRequestError extends Error {
   constructor(
     public readonly code: string,
@@ -76,21 +141,15 @@ function parseInspectOptions(args: string[]): InspectOptions {
   }
 
   const sessionId = args[1];
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.LOUPE_BROWSER_SESSION;
-  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
+  let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let structured = false;
 
   for (let index = 2; index < args.length; index += 1) {
     const flag = args[index];
     if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--browser-session") {
-      browserSession = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--analysis-credential") {
-      analysisCredential = readValue(args, index, flag);
       index += 1;
     } else if (flag === "--json") {
       structured = true;
@@ -99,20 +158,11 @@ function parseInspectOptions(args: string[]): InspectOptions {
     }
   }
 
+  const parsedServerUrl = parseServerUrl(serverUrl);
   if (!browserSession && !analysisCredential) {
     throw new UsageError(
-      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+      "An Analysis credential is required via --analysis-credential-file or CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL.",
     );
-  }
-
-  let parsedServerUrl: URL;
-  try {
-    parsedServerUrl = new URL(serverUrl);
-  } catch {
-    throw new UsageError(`Invalid server URL: ${serverUrl}`);
-  }
-  if (!(["http:", "https:"] as string[]).includes(parsedServerUrl.protocol)) {
-    throw new UsageError("The server URL must use http or https.");
   }
 
   return {
@@ -257,19 +307,32 @@ async function authenticatedJson(
 }
 
 function parseServerUrl(value: string): URL {
+  let url: URL;
   try {
-    const url = new URL(value);
-    if (!(["http:", "https:"] as string[]).includes(url.protocol)) throw new Error();
-    return url;
+    url = new URL(value);
   } catch {
     throw new UsageError(`Invalid server URL: ${value}`);
   }
+  if (!(["http:", "https:"] as string[]).includes(url.protocol)) {
+    throw new UsageError("The server URL must use http or https.");
+  }
+  if (
+    url.protocol === "http:" &&
+    url.hostname !== "localhost" &&
+    url.hostname !== "127.0.0.1" &&
+    url.hostname !== "[::1]"
+  ) {
+    throw new UsageError(
+      "SERVER_URL_INSECURE: HTTPS is required unless the server is localhost, 127.0.0.1, or ::1.",
+    );
+  }
+  return url;
 }
 
 async function search(args: string[]): Promise<void> {
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.LOUPE_BROWSER_SESSION;
-  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
+  let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let structured = false;
   const query = new URLSearchParams();
   const valueFlags: Record<string, string> = {
@@ -298,19 +361,13 @@ async function search(args: string[]): Promise<void> {
     } else if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
       index += 1;
-    } else if (flag === "--browser-session") {
-      browserSession = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--analysis-credential") {
-      analysisCredential = readValue(args, index, flag);
-      index += 1;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
     }
   }
   if (!browserSession && !analysisCredential) {
     throw new UsageError(
-      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+      "An Analysis credential is required via --analysis-credential-file or CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL.",
     );
   }
   const endpoint = new URL("/api/v1/organization/activity", parseServerUrl(serverUrl));
@@ -369,9 +426,9 @@ async function compare(args: string[]): Promise<void> {
     }
     return { scope: "turn" as const, sessionId, turnId };
   });
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.LOUPE_BROWSER_SESSION;
-  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
+  let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let includeSeeded = false;
   let structured = false;
   let statement: string | undefined;
@@ -408,12 +465,6 @@ async function compare(args: string[]): Promise<void> {
     } else if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
       index += 1;
-    } else if (flag === "--browser-session") {
-      browserSession = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--analysis-credential") {
-      analysisCredential = readValue(args, index, flag);
-      index += 1;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
     }
@@ -421,7 +472,7 @@ async function compare(args: string[]): Promise<void> {
   if (!statement) throw new UsageError("The compare command requires --claim.");
   if (!browserSession && !analysisCredential) {
     throw new UsageError(
-      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+      "An Analysis credential is required via --analysis-credential-file or CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL.",
     );
   }
   const endpoint = new URL("/api/v1/comparisons", parseServerUrl(serverUrl));
@@ -474,20 +525,14 @@ async function cite(args: string[]): Promise<void> {
     throw new UsageError(`Invalid citation selection: ${selection}`);
   }
   const [sessionId, turnId, activityId] = parts as [string, string, string];
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.LOUPE_BROWSER_SESSION;
-  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
+  let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let structured = false;
   for (let index = 2; index < args.length; index += 1) {
     const flag = args[index]!;
     if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--browser-session") {
-      browserSession = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--analysis-credential") {
-      analysisCredential = readValue(args, index, flag);
       index += 1;
     } else if (flag === "--json") {
       structured = true;
@@ -497,7 +542,7 @@ async function cite(args: string[]): Promise<void> {
   }
   if (!browserSession && !analysisCredential) {
     throw new UsageError(
-      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+      "An Analysis credential is required via --analysis-credential-file or CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL.",
     );
   }
   const baseUrl = parseServerUrl(serverUrl);
@@ -568,16 +613,13 @@ async function submitCandidate(args: string[]): Promise<void> {
     throw new UsageError("Expected candidate submit <manifest.json>.");
   }
   const manifestPath = args[2]!;
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let structured = false;
   for (let index = 3; index < args.length; index += 1) {
     const flag = args[index]!;
     if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--analysis-credential") {
-      analysisCredential = readValue(args, index, flag);
       index += 1;
     } else if (flag === "--json") {
       structured = true;
@@ -587,7 +629,7 @@ async function submitCandidate(args: string[]): Promise<void> {
   }
   if (!analysisCredential) {
     throw new UsageError(
-      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+      "An Analysis credential is required via --analysis-credential-file or CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL.",
     );
   }
   let manifest: unknown;
@@ -661,17 +703,14 @@ async function submitCandidate(args: string[]): Promise<void> {
 }
 
 async function watch(args: string[]): Promise<void> {
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let structured = false;
   let maxEvents = Number.POSITIVE_INFINITY;
   for (let index = 1; index < args.length; index += 1) {
     const flag = args[index]!;
     if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--analysis-credential") {
-      analysisCredential = readValue(args, index, flag);
       index += 1;
     } else if (flag === "--max-events") {
       maxEvents = Number(readValue(args, index, flag));
@@ -687,7 +726,7 @@ async function watch(args: string[]): Promise<void> {
   }
   if (!analysisCredential) {
     throw new UsageError(
-      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+      "An Analysis credential is required via --analysis-credential-file or CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL.",
     );
   }
   const response = await fetch(
@@ -751,8 +790,8 @@ async function manageCredential(args: string[]): Promise<void> {
   if (!action || !["create", "list", "revoke"].includes(action)) {
     throw new UsageError("Expected credential create, list, or revoke.");
   }
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
   let structured = false;
   let name: string | undefined;
   const credentialId = action === "revoke" ? args[2] : undefined;
@@ -761,9 +800,6 @@ async function manageCredential(args: string[]): Promise<void> {
     const flag = args[index]!;
     if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--browser-session") {
-      browserSession = readValue(args, index, flag);
       index += 1;
     } else if (flag === "--name") {
       name = readValue(args, index, flag);
@@ -776,7 +812,7 @@ async function manageCredential(args: string[]): Promise<void> {
   }
   if (!browserSession) {
     throw new UsageError(
-      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+      "A browser Session is required via --browser-session-file or CODING_AGENT_OBSERVABILITY_BROWSER_SESSION.",
     );
   }
   const endpoint = new URL("/api/v1/analysis-credentials", parseServerUrl(serverUrl));
@@ -838,15 +874,12 @@ async function importExamples(args: string[]): Promise<void> {
   if (args[1] !== "import" || args[2] !== "starter-v1") {
     throw new UsageError("Expected examples import starter-v1.");
   }
-  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
   for (let index = 3; index < args.length; index += 1) {
     const flag = args[index]!;
     if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
-      index += 1;
-    } else if (flag === "--browser-session") {
-      browserSession = readValue(args, index, flag);
       index += 1;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
@@ -854,7 +887,7 @@ async function importExamples(args: string[]): Promise<void> {
   }
   if (!browserSession) {
     throw new UsageError(
-      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+      "A browser Session is required via --browser-session-file or CODING_AGENT_OBSERVABILITY_BROWSER_SESSION.",
     );
   }
   const endpoint = new URL(
@@ -873,12 +906,13 @@ async function importExamples(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
   if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
     process.stdout.write(`${usage}\n`);
     return;
   }
   try {
+    args = await normalizeCredentialInputs(args);
     if (args[0] === "search") {
       await search(args);
     } else if (args[0] === "compare") {

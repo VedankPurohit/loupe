@@ -98,4 +98,65 @@ describe("reversible macOS setup", () => {
     expect(await readFile(join(codexHome, "hooks.json"), "utf8")).toBe(originalHooks);
     expect(serviceManager.actions).toEqual(["install", "start", "stop", "stop", "remove"]);
   });
+
+  it("rejects cleartext delivery to a non-loopback server", async () => {
+    const root = join(tmpdir(), `relay-setup-${randomUUID()}`);
+    roots.push(root);
+
+    await expect(
+      previewMacosSetup({
+        codexHome: join(root, "codex"),
+        stateDir: join(root, "state"),
+        serverUrl: "http://observability.example.test:3000",
+        nodePath: process.execPath,
+        relayCliPath: "/tmp/relay-cli.js",
+      }),
+    ).rejects.toThrow(
+      "SERVER_URL_INSECURE: HTTPS is required unless the server is localhost, 127.0.0.1, or ::1.",
+    );
+  });
+
+  it("validates every managed file before disabling launchd during uninstall", async () => {
+    const root = join(tmpdir(), `relay-setup-${randomUUID()}`);
+    roots.push(root);
+    const codexHome = join(root, "codex");
+    const stateDir = join(root, "state");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(join(codexHome, "config.toml"), 'model = "gpt-5.6-sol"\n');
+    await writeFile(join(codexHome, "hooks.json"), '{"hooks": {}}\n');
+    const serviceManager = new FakeServiceManager();
+    const preview = await previewMacosSetup({
+      codexHome,
+      stateDir,
+      serverUrl: "http://127.0.0.1:3000",
+      nodePath: process.execPath,
+      relayCliPath: "/tmp/relay-cli.js",
+    });
+    await applyMacosSetup({
+      preview,
+      enrollment: {
+        credential: `device_${"a".repeat(48)}`,
+        deviceId: "11111111-1111-4111-8111-111111111111",
+      },
+      serviceManager,
+      verifyDelivery: async () => true,
+    });
+    serviceManager.actions = [];
+    await writeFile(join(codexHome, "hooks.json"), '{"hooks": {"Stop": []}}\n');
+
+    await expect(
+      uninstallMacosSetup({
+        stateDir,
+        serviceManager,
+        beforeServiceStop: async () => {
+          serviceManager.actions.push("revoke");
+        },
+      }),
+    ).rejects.toThrow("UNINSTALL_CONFIG_CHANGED");
+    expect(serviceManager.actions).toEqual([]);
+    expect(await readFile(join(codexHome, "config.toml"), "utf8")).toBe(
+      preview.proposed.config,
+    );
+  });
 });

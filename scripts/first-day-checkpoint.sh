@@ -11,13 +11,13 @@ STATE_DIR="${STATE_DIR:-$HOME/Library/Application Support/coding-agent-observabi
 pnpm --filter @workspace/relay build
 pnpm --filter @workspace/diagnostic-cli build
 
-node packages/relay/dist/cli.js checkpoint \
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js checkpoint \
   --server-url "$SERVER_URL" \
   --web-url "$WEB_URL" \
   --state-dir "$STATE_DIR" \
-  --browser-session "$BROWSER_SESSION" \
   --session-id "$SESSION_ID"
 
-node apps/diagnostic-cli/dist/cli.js inspect "$SESSION_ID" \
-  --server-url "$SERVER_URL" \
-  --browser-session "$BROWSER_SESSION"
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node apps/diagnostic-cli/dist/cli.js inspect "$SESSION_ID" \
+  --server-url "$SERVER_URL"

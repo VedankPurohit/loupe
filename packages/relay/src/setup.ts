@@ -83,6 +83,28 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+export function requireSecureServerUrl(value: string): URL {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(value);
+  } catch {
+    throw new Error("SERVER_URL_INVALID: server URL must use HTTP or HTTPS.");
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new Error("SERVER_URL_INVALID: server URL must use HTTP or HTTPS.");
+  }
+  if (parsedUrl.protocol === "http:" && !isLoopbackHostname(parsedUrl.hostname)) {
+    throw new Error(
+      "SERVER_URL_INSECURE: HTTPS is required unless the server is localhost, 127.0.0.1, or ::1.",
+    );
+  }
+  return parsedUrl;
+}
+
 async function optionalText(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf8");
@@ -155,10 +177,7 @@ export async function previewMacosSetup(options: {
   otlpPort?: number;
 }): Promise<MacosSetupPreview> {
   const serverUrl = options.serverUrl ?? "http://127.0.0.1:3000";
-  const parsedUrl = new URL(serverUrl);
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    throw new Error("SERVER_URL_INVALID: server URL must use HTTP or HTTPS.");
-  }
+  const parsedUrl = requireSecureServerUrl(serverUrl);
   const configPath = join(options.codexHome, "config.toml");
   const hooksPath = join(options.codexHome, "hooks.json");
   const before = {
@@ -288,7 +307,17 @@ export async function disconnectMacosSetup(options: {
   serviceManager: RelayServiceManager;
   fetch?: typeof globalThis.fetch;
 }): Promise<void> {
+  await revokeMacosSetupCredential(options);
+  await options.serviceManager.stop();
+}
+
+export async function revokeMacosSetupCredential(options: {
+  stateDir: string;
+  browserSession: string;
+  fetch?: typeof globalThis.fetch;
+}): Promise<void> {
   const state = await readSetupState(options.stateDir);
+  requireSecureServerUrl(state.serverUrl);
   if (state.credential) {
     const response = await (options.fetch ?? globalThis.fetch)(
       `${state.serverUrl}/api/v1/devices/${encodeURIComponent(state.deviceId)}/revoke`,
@@ -305,23 +334,28 @@ export async function disconnectMacosSetup(options: {
     state.credential = null;
     await writeSetupState(state);
   }
-  await options.serviceManager.stop();
 }
 
 export async function uninstallMacosSetup(options: {
   stateDir: string;
   serviceManager: RelayServiceManager;
+  beforeServiceStop?: () => Promise<void>;
 }): Promise<void> {
   const state = await readSetupState(options.stateDir);
-  await options.serviceManager.stop();
-  await options.serviceManager.remove();
-  for (const snapshot of state.files) {
-    const current = await optionalText(snapshot.path);
-    if (current !== null && digest(current) !== snapshot.appliedHash) {
+  const currentFiles = await Promise.all(
+    state.files.map(async (snapshot) => ({ snapshot, current: await optionalText(snapshot.path) })),
+  );
+  for (const { snapshot, current } of currentFiles) {
+    if (digest(current ?? "") !== snapshot.appliedHash) {
       throw new Error(
         `UNINSTALL_CONFIG_CHANGED: refusing to overwrite changes in ${snapshot.path}.`,
       );
     }
+  }
+  await options.beforeServiceStop?.();
+  await options.serviceManager.stop();
+  await options.serviceManager.remove();
+  for (const { snapshot } of currentFiles) {
     if (snapshot.existed) {
       await writeFile(snapshot.path, Buffer.from(snapshot.contentBase64, "base64"));
     } else {

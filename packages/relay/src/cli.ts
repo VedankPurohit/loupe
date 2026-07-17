@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFile, stat } from "node:fs/promises";
 
 import {
   DeviceEnrollmentGrantResponseSchema,
@@ -24,6 +25,8 @@ import {
   disconnectMacosSetup,
   previewMacosSetup,
   readSetupState,
+  requireSecureServerUrl,
+  revokeMacosSetupCredential,
   uninstallMacosSetup,
 } from "./setup.js";
 
@@ -35,15 +38,64 @@ const defaultStateDir = join(
 );
 
 const usage = `Usage:
-  coding-agent-relay setup [--server-url URL] --browser-session TOKEN [--device-name NAME] [--codex-home PATH] [--state-dir PATH] [--yes]
-  coding-agent-relay disconnect --browser-session TOKEN [--state-dir PATH]
-  coding-agent-relay uninstall [--browser-session TOKEN] [--state-dir PATH]
+  coding-agent-relay setup [--server-url URL] [--browser-session-file PATH|-] [--device-name NAME] [--codex-home PATH] [--state-dir PATH] [--yes]
+  coding-agent-relay disconnect [--browser-session-file PATH|-] [--state-dir PATH]
+  coding-agent-relay uninstall [--browser-session-file PATH|-] [--state-dir PATH]
   coding-agent-relay status [--state-dir PATH]
-  coding-agent-relay checkpoint --browser-session TOKEN --session-id ID [--web-url URL] [--state-dir PATH]
+  coding-agent-relay checkpoint [--browser-session-file PATH|-] --session-id ID [--web-url URL] [--state-dir PATH]
+
+Credential input:
+  CODING_AGENT_OBSERVABILITY_BROWSER_SESSION  Browser Session value for automation
+  --browser-session-file PATH                 Read it from a 0600 file (or stdin with -)
 
 Internal service commands:
   coding-agent-relay run --state-dir PATH [--otlp-port PORT]
   coding-agent-relay hook --state-dir PATH`;
+
+const legacySecretFlag = "--browser-session";
+
+function rejectSecretArguments(args: string[]): void {
+  if (
+    args.some(
+      (argument) =>
+        argument === legacySecretFlag || argument.startsWith(`${legacySecretFlag}=`),
+    )
+  ) {
+    throw new Error(
+      "SECRET_ARG_REJECTED: --browser-session is unsafe because process arguments may be visible. Use CODING_AGENT_OBSERVABILITY_BROWSER_SESSION, --browser-session-file PATH (mode 0600), or --browser-session-file - for stdin.",
+    );
+  }
+}
+
+async function readSecretInput(path: string): Promise<string> {
+  let content: string;
+  if (path === "-") {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+    content = Buffer.concat(chunks).toString("utf8");
+  } else {
+    const metadata = await stat(path);
+    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
+      throw new Error(
+        "SECRET_FILE_PERMISSIONS: browser Session file must be a regular file readable only by its owner (mode 0600).",
+      );
+    }
+    content = await readFile(path, "utf8");
+  }
+  const secret = content.trim();
+  if (!secret) throw new Error("SECRET_INPUT_EMPTY: browser Session input was empty.");
+  return secret;
+}
+
+async function browserSession(options: Map<string, string | true>): Promise<string> {
+  const file = options.get("--browser-session-file");
+  if (typeof file === "string") return readSecretInput(file);
+  const environment = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION?.trim();
+  if (environment) return environment;
+  throw new Error(
+    "BROWSER_SESSION_REQUIRED: set CODING_AGENT_OBSERVABILITY_BROWSER_SESSION or use --browser-session-file PATH (mode 0600) or - for stdin.",
+  );
+}
 
 function flags(args: string[]): Map<string, string | true> {
   const result = new Map<string, string | true>();
@@ -98,6 +150,7 @@ async function setup(args: string[]): Promise<void> {
   const options = flags(args);
   const stateDir = value(options, "--state-dir", defaultStateDir);
   const serverUrl = value(options, "--server-url", "http://127.0.0.1:3000").replace(/\/$/, "");
+  requireSecureServerUrl(serverUrl);
   try {
     const installed = await readSetupState(stateDir);
     if (installed.serverUrl !== serverUrl) {
@@ -129,10 +182,10 @@ async function setup(args: string[]): Promise<void> {
     process.stdout.write("\nReview the preview, then rerun with --yes to consent and apply.\n");
     return;
   }
-  const browserSession = value(options, "--browser-session");
+  const browserSessionValue = await browserSession(options);
   const enrollment = await enroll({
     serverUrl,
-    browserSession,
+    browserSession: browserSessionValue,
     deviceName: value(options, "--device-name", `Mac ${homedir().split("/").at(-1) ?? "device"}`),
   });
   const manager = new LaunchdServiceManager({ homeDir: homedir() });
@@ -160,7 +213,7 @@ async function disconnect(args: string[]): Promise<void> {
   const options = flags(args);
   await disconnectMacosSetup({
     stateDir: value(options, "--state-dir", defaultStateDir),
-    browserSession: value(options, "--browser-session"),
+    browserSession: await browserSession(options),
     serviceManager: new LaunchdServiceManager({ homeDir: homedir() }),
   });
   process.stdout.write("Disconnected: delivery credential revoked; accepted server history was preserved.\n");
@@ -171,14 +224,18 @@ async function uninstall(args: string[]): Promise<void> {
   const stateDir = value(options, "--state-dir", defaultStateDir);
   const manager = new LaunchdServiceManager({ homeDir: homedir() });
   const state = await readSetupState(stateDir);
-  if (state.credential) {
-    await disconnectMacosSetup({
-      stateDir,
-      browserSession: value(options, "--browser-session"),
-      serviceManager: manager,
-    });
-  }
-  await uninstallMacosSetup({ stateDir, serviceManager: manager });
+  const browserSessionValue = state.credential ? await browserSession(options) : undefined;
+  await uninstallMacosSetup({
+    stateDir,
+    serviceManager: manager,
+    beforeServiceStop: browserSessionValue
+      ? () =>
+          revokeMacosSetupCredential({
+            stateDir,
+            browserSession: browserSessionValue,
+          })
+      : undefined,
+  });
   process.stdout.write("Uninstalled: launchd service and managed Codex capture changes removed; server history preserved.\n");
 }
 
@@ -227,7 +284,7 @@ async function checkpoint(args: string[]): Promise<void> {
   const stateDir = value(options, "--state-dir", defaultStateDir);
   const state = await readSetupState(stateDir);
   const sessionId = value(options, "--session-id");
-  const browserSession = value(options, "--browser-session");
+  const browserSessionValue = await browserSession(options);
   const service = await new LaunchdServiceManager({ homeDir: homedir() }).status();
   if (service !== "running") throw new Error(`CHECKPOINT_SERVICE_${service.toUpperCase()}`);
   const queue = openDeliveryQueue({ databasePath: join(stateDir, "relay.sqlite") });
@@ -238,7 +295,7 @@ async function checkpoint(args: string[]): Promise<void> {
   }
   const detailResponse = await fetch(
     `${state.serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}`,
-    { headers: { cookie: `${browserSessionCookieName}=${browserSession}` } },
+    { headers: { cookie: `${browserSessionCookieName}=${browserSessionValue}` } },
   );
   if (!detailResponse.ok) throw new Error(`CHECKPOINT_SESSION_HTTP_${detailResponse.status}`);
   const detail = ExecutionSessionDetailResponseSchema.parse(await detailResponse.json());
@@ -264,6 +321,7 @@ async function main(): Promise<void> {
     process.stdout.write(`${usage}\n`);
     return;
   }
+  rejectSecretArguments(args);
   if (command === "setup") return setup(args);
   if (command === "disconnect") return disconnect(args);
   if (command === "uninstall") return uninstall(args);

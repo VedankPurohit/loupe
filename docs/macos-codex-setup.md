@@ -10,8 +10,9 @@ the existing Device-enrollment API, and installs the relay as a per-user
 - macOS with Codex `0.144.5`, Node.js `22.22.3` or later in the Node 22 line,
   pnpm `10.28.2`, and the Loupe server running.
 - An authenticated browser Session for the Organization member who will own the
-  Enrolled device. Copy the value of the HttpOnly `browser_session` cookie only
-  into the command invocation; do not put it in shell history or a repository.
+  Enrolled device. Keep the HttpOnly `browser_session` value out of command
+  arguments, shell history, and repositories. Use a `0600` file, stdin, or the
+  documented environment variable.
 - Captured prompts, hook payloads, and telemetry are Organization-visible to all
   Organization members.
 - Ordinary high-confidence secret redaction is enabled by default. It is
@@ -26,7 +27,6 @@ Build the relay CLI, then preview setup:
 pnpm --filter @workspace/relay build
 node packages/relay/dist/cli.js setup \
   --server-url http://127.0.0.1:3000 \
-  --browser-session "$BROWSER_SESSION" \
   --device-name "Development Mac"
 ```
 
@@ -35,12 +35,18 @@ directory, or `~/Library/LaunchAgents`. Review it, then repeat with `--yes` to
 give consent and apply:
 
 ```bash
-node packages/relay/dist/cli.js setup \
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js setup \
   --server-url http://127.0.0.1:3000 \
-  --browser-session "$BROWSER_SESSION" \
   --device-name "Development Mac" \
   --yes
 ```
+
+For repeatable automation, write the browser Session to a regular file with
+mode `0600` and pass `--browser-session-file PATH`; use
+`--browser-session-file -` for stdin. The former token-valued flag is rejected
+because process arguments may be visible. Cleartext HTTP is permitted only for
+`localhost`, `127.0.0.1`, and `::1`; remote servers must use HTTPS.
 
 For an isolated test, add `--codex-home /tmp/codex-home` and
 `--state-dir /tmp/relay-state`. The setup command safely appends a managed OTel
@@ -84,8 +90,8 @@ Disconnect revokes the Device credential through the browser-authorized API and
 stops the relay. It does not delete already accepted PostgreSQL history:
 
 ```bash
-node packages/relay/dist/cli.js disconnect \
-  --browser-session "$BROWSER_SESSION"
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js disconnect
 ```
 
 Uninstall first disconnects if necessary, unloads and removes the per-user
@@ -93,13 +99,15 @@ service, restores the exact prior Codex configuration/hook bytes, and removes
 the relay state/SQLite queue. It also preserves server history:
 
 ```bash
-node packages/relay/dist/cli.js uninstall \
-  --browser-session "$BROWSER_SESSION"
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js uninstall
 ```
 
-If either managed Codex file changed after setup, uninstall refuses to overwrite
-it and reports `UNINSTALL_CONFIG_CHANGED`. Preserve the reported file, reconcile
-the post-setup edit, and retry; the private backup remains available meanwhile.
+If either managed Codex file changed after setup, uninstall validates both
+snapshots before it stops or removes `launchd`, refuses to overwrite the change,
+and reports `UNINSTALL_CONFIG_CHANGED`. Preserve the reported file, reconcile
+the post-setup edit, and retry; the private backup and running service remain
+available meanwhile.
 
 ## First-day checkpoint
 

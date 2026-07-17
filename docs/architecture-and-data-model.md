@@ -144,6 +144,8 @@ Bootstrap codes, Invite codes, and Device-enrollment grants are one-time or
 short-lived exchange credentials, not durable API credentials. The plaintext
 Device and Analysis tokens are returned only at creation/enrollment. Rotate a
 credential by revoking it and deliberately creating or enrolling a replacement.
+Browser logout revokes only the current persisted Session token before clearing
+the cookie; replay of that token is denied immediately.
 
 ## Security and persistence boundaries
 

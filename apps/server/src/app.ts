@@ -2050,6 +2050,49 @@ export async function buildApp(options: BuildAppOptions = {}) {
     },
   );
 
+  app.post(
+    "/api/v1/session/logout",
+    {
+      schema: {
+        operationId: "logoutBrowserSession",
+        security: browserSessionOpenApiSecurity,
+        response: {
+          204: AuthenticatedSessionResponseSchema.optional(),
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      if (!token || !(await identityStore.revokeSession(token))) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return reply
+        .clearCookie(browserSessionCookieName, {
+          httpOnly: true,
+          path: "/",
+          sameSite: "lax",
+          secure: process.env.NODE_ENV === "production",
+        })
+        .status(204)
+        .send();
+    },
+  );
+
   app.get(
     "/api/v1/openapi.json",
     { schema: { hide: true } },

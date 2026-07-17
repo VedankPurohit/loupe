@@ -37,9 +37,9 @@ Nothing is seeded during startup. An Administrator must explicitly call
 action, or run:
 
 ```bash
-loupe-diagnostic examples import starter-v1 \
-  --server-url http://127.0.0.1:3000 \
-  --browser-session "$LOUPE_BROWSER_SESSION"
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  coding-agent-analysis examples import starter-v1 \
+  --server-url http://127.0.0.1:3000
 ```
 
 The versioned operation is idempotent and uses a server-controlled transaction,
@@ -59,8 +59,8 @@ same designation.
 The plain CLI uses the same route and supports human or structured output:
 
 ```bash
-loupe-diagnostic search --query compilation --repository acme/project
-loupe-diagnostic search --include-seeded --page 2 --page-size 10 --json
+coding-agent-analysis search --query compilation --repository acme/project
+coding-agent-analysis search --include-seeded --page 2 --page-size 10 --json
 ```
 
 Use `--member`, `--outcome`, `--review-status`, `--tag`, `--model`, `--tool`,
