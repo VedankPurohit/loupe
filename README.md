@@ -176,6 +176,7 @@ The Playwright harness owns a disposable `agent_observer_playwright` database, c
 - [`docs/session-evidence.md`](./docs/session-evidence.md) — Tool and lifecycle coverage, Token categories and Turn association, Context methods, versioned estimated cost, capability gaps, and refusal language.
 - [`docs/organization-discovery-and-search.md`](./docs/organization-discovery-and-search.md) — filters, pagination, descriptive aggregates, annotations, deep links, and the explicit Seeded Example-pack boundary.
 - [`docs/session-comparisons.md`](./docs/session-comparisons.md) — populations, completeness, citations, real-Turn evidence rules, synthetic inclusion, and unsupported-claim refusals.
+- [`docs/investigation-prototypes.md`](./docs/investigation-prototypes.md) — three working ticket-11 investigation directions, their run commands, evaluation matrix, and screenshot checklist for the user-selection gate.
 - [`docs/macos-codex-setup.md`](./docs/macos-codex-setup.md) — setup preview and consent, `launchd`, configuration backup/restore, disconnect, uninstall, recovery, and the executable first-day checkpoint.
 - [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.
 - [Build-ready specification](./.scratch/coding-agent-observability/spec.md) — normative product, architecture, testing, and acceptance strategy.
