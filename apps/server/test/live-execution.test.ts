@@ -24,10 +24,14 @@ interface OtelFixture {
   }>;
 }
 
-function toSourceEvent(event: HookFixture["events"][number]) {
+function toSourceEvent(
+  event: HookFixture["events"][number],
+  producerVersion?: string,
+) {
+  const version = typeof producerVersion === "string" ? producerVersion : "0.144.5";
   const raw: CodexSourceObservation = {
     source: "codex_hook",
-    producer: { name: "codex", version: "0.144.5" },
+    producer: { name: "codex", version },
     producerEvent: String(event.payload.hook_event_name),
     occurredAt: new Date(event.captured_at).toISOString(),
     capturedAt: new Date(event.captured_at).toISOString(),
@@ -218,7 +222,7 @@ describe.sequential("live execution projection through /api/v1", () => {
     const delivered = await deliver(
       baseUrl,
       deviceCredential,
-      fixtureEvents.map(toSourceEvent),
+      fixtureEvents.map((event) => toSourceEvent(event)),
     );
     expect(delivered.status).toBe(200);
 
@@ -531,6 +535,120 @@ describe.sequential("live execution projection through /api/v1", () => {
         expect.objectContaining({ capability: "observed_mcp_use", state: "observed" }),
       ]),
     );
+  });
+
+  it("does not attach attacker-controlled tool content to another Session's evidence", async () => {
+    const attackerSessionId = "session-attacker-001";
+    const attackerAgentId = "agent-attacker-001";
+    const attackerStart = toSourceEvent({
+      captured_at: "2026-07-17T11:00:00.000Z",
+      payload: {
+        hook_event_name: "SessionStart",
+        session_id: attackerSessionId,
+        agent_id: attackerAgentId,
+        source: "startup",
+      },
+    });
+    const injectedToolEvidence = toSourceEvent({
+      captured_at: "2026-07-17T11:00:01.000Z",
+      payload: {
+        hook_event_name: "PostToolUse",
+        session_id: attackerSessionId,
+        agent_id: attackerAgentId,
+        tool_name: "Bash",
+        tool_use_id: "attacker-tool-call",
+        tool_response: {
+          session_id: "session-probe-001",
+          turn_id: "turn-probe-001",
+          agent_id: "agent-run-probe-001",
+          text: "attacker-controlled tool content",
+        },
+      },
+    });
+    expect(
+      (
+        await deliver(baseUrl, deviceCredential, [
+          attackerStart,
+          injectedToolEvidence,
+        ])
+      ).status,
+    ).toBe(200);
+
+    const victim = await fetch(`${baseUrl}/api/v1/sessions/session-probe-001`, {
+      headers: { cookie: browserCookie },
+    });
+    expect(victim.status).toBe(200);
+    const victimDetail = (await victim.json()) as {
+      evidence: { tools: Array<{ identifiers: { hookToolUseId: string | null } }> };
+    };
+    expect(
+      victimDetail.evidence.tools.some(
+        (tool) => tool.identifiers.hookToolUseId === "attacker-tool-call",
+      ),
+    ).toBe(false);
+
+    const attacker = await fetch(
+      `${baseUrl}/api/v1/sessions/${attackerSessionId}`,
+      { headers: { cookie: browserCookie } },
+    );
+    expect(attacker.status).toBe(200);
+    expect(await attacker.json()).toMatchObject({
+      evidence: {
+        tools: [
+          expect.objectContaining({
+            identifiers: expect.objectContaining({
+              hookToolUseId: "attacker-tool-call",
+            }),
+          }),
+        ],
+      },
+    });
+  });
+
+  it("retains unsupported producer evidence without projecting it as documented Session evidence", async () => {
+    const unsupported = toSourceEvent(
+      {
+        captured_at: "2026-07-17T11:01:00.000Z",
+        payload: {
+          hook_event_name: "PostToolUse",
+          session_id: "session-probe-001",
+          turn_id: "turn-probe-001",
+          tool_name: "FutureTool",
+          tool_use_id: "unsupported-tool-call",
+          tool_response: "future producer payload",
+        },
+      },
+      "99.0.0",
+    );
+    expect((await deliver(baseUrl, deviceCredential, [unsupported])).status).toBe(200);
+
+    const retained = await fetch(
+      `${baseUrl}/api/v1/source-events/${unsupported.id}`,
+      { headers: { cookie: browserCookie } },
+    );
+    expect(retained.status).toBe(200);
+    expect(await retained.json()).toMatchObject({
+      id: unsupported.id,
+      producer: { version: "99.0.0" },
+      adapter: {
+        status: "downgraded",
+        reason: "unsupported_producer_version",
+      },
+      rawPayload: { tool_use_id: "unsupported-tool-call" },
+    });
+
+    const projected = await fetch(
+      `${baseUrl}/api/v1/sessions/session-probe-001`,
+      { headers: { cookie: browserCookie } },
+    );
+    const detail = (await projected.json()) as {
+      evidence: { tools: Array<{ identifiers: { hookToolUseId: string | null } }> };
+    };
+    expect(
+      detail.evidence.tools.some(
+        (tool) => tool.identifiers.hookToolUseId === "unsupported-tool-call",
+      ),
+    ).toBe(false);
   });
 
   it("streams ordered authenticated invalidations and recovers through an ordinary query", async () => {

@@ -431,6 +431,18 @@ export const TokenUsageSampleSchema = z.object({
   evidence: EvidenceSchema,
 });
 
+export const ApiRequestEvidenceSchema = z.object({
+  id: z.string().min(1),
+  occurredAt: z.iso.datetime(),
+  attempt: z.number().int().nonnegative().nullable(),
+  statusCode: z.number().int().nonnegative().nullable(),
+  durationMs: z.number().nonnegative().nullable(),
+  success: z.boolean().nullable(),
+  error: z.string().nullable(),
+  turnAssociation: TurnAssociationSchema,
+  evidence: EvidenceSchema,
+});
+
 export const ContextLimitSchema = z.object({
   model: z.string().nullable(),
   contextWindow: z.number().int().positive().nullable(),
@@ -501,6 +513,7 @@ export const CapabilityEvidenceSchema = z.object({
 export const RichSessionEvidenceSchema = z.object({
   tools: z.array(ToolEvidenceSchema),
   lifecycle: z.array(LifecycleEvidenceSchema),
+  apiRequests: z.array(ApiRequestEvidenceSchema),
   tokenUsage: z.array(TokenUsageSampleSchema),
   context: ContextEvidenceSchema,
   costEstimates: z.array(CostEstimateSchema),
@@ -1051,6 +1064,7 @@ export type LiveExecutionEvent = z.infer<typeof LiveExecutionEventSchema>;
 export type TurnAssociation = z.infer<typeof TurnAssociationSchema>;
 export type ToolEvidence = z.infer<typeof ToolEvidenceSchema>;
 export type LifecycleEvidence = z.infer<typeof LifecycleEvidenceSchema>;
+export type ApiRequestEvidence = z.infer<typeof ApiRequestEvidenceSchema>;
 export type TokenUsageSample = z.infer<typeof TokenUsageSampleSchema>;
 export type ContextEvidence = z.infer<typeof ContextEvidenceSchema>;
 export type CostEstimate = z.infer<typeof CostEstimateSchema>;

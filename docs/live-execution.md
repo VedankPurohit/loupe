@@ -5,6 +5,10 @@ projection is a replayable view of that evidence; deleting and rebuilding the
 projection does not rewrite, replace, or normalize the retained source payload.
 Projection version `1` runs after an accepted or duplicate delivery batch, so a
 lost acknowledgement or replay produces the same public Session detail.
+Projection rebuilds are serialized per Organization with a transaction-scoped
+advisory lock; the immutable source-event read and replacement projection write
+occur under that same lock so concurrent deliveries cannot publish a stale
+snapshot.
 
 ## Canonical identities
 
@@ -76,10 +80,19 @@ The initial query surface is browser-session authenticated:
 Device credentials cannot browse either route. Diagnostic and browser clients
 must use these `/api/v1` routes and never PostgreSQL.
 
+Rich evidence is associated only when a server-side adapter accepts the
+producer version, a source-defined identity or canonical adapter observation
+matches the Session, and delivery provenance matches the owning Device.
+Arbitrary nested tool input/output fields are never searched for identities.
+Downgraded evidence remains retained and retrievable as a source event without
+becoming documented or exact projection data.
+
 ## Live updates and recovery
 
 `GET /api/v1/live` is an authenticated Server-Sent Events stream. Each
-invalidation is ordered within the running server process:
+invalidation is scoped to the authenticated Organization and ordered within
+that Organization in the running server process. Neither Session ids nor gaps
+in a cross-Organization global sequence are exposed:
 
 ```text
 id: 7

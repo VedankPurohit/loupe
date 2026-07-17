@@ -13,6 +13,155 @@ interface HookFixture {
 }
 
 describe("Codex Agent-adapter contract", () => {
+  it("projects codex.api_request transport attempts without claiming stable logical requests", () => {
+    const sourceEventId = "26c61977-c118-4bc5-a022-c86cf2e1a398";
+    const evidence = analyzeCodexEvidence(
+      [
+        {
+          sourceEventId,
+          observation: {
+            source: "codex_otel_log",
+            producer: { name: "codex", version: "0.144.5" },
+            producerEvent: "codex.api_request",
+            occurredAt: "2026-07-17T10:36:30.000Z",
+            capturedAt: "2026-07-17T10:36:30.100Z",
+            capturePath: "otel:logs",
+            payload: {
+              log_record: {
+                attributes: [
+                  { key: "event.name", value: { stringValue: "codex.api_request" } },
+                  { key: "attempt", value: { intValue: "2" } },
+                  { key: "http.response.status_code", value: { intValue: "503" } },
+                  { key: "duration_ms", value: { intValue: "451" } },
+                  { key: "success", value: { boolValue: false } },
+                  { key: "error.message", value: { stringValue: "upstream unavailable" } },
+                ],
+              },
+            },
+          },
+        },
+      ],
+      {
+        turns: [
+          {
+            id: "turn-1",
+            firstObservedAt: "2026-07-17T10:36:25.000Z",
+            lastObservedAt: "2026-07-17T10:36:35.000Z",
+          },
+        ],
+      },
+    );
+
+    expect(evidence.apiRequests).toEqual([
+      {
+        id: `api-request:${sourceEventId}`,
+        occurredAt: "2026-07-17T10:36:30.000Z",
+        attempt: 2,
+        statusCode: 503,
+        durationMs: 451,
+        success: false,
+        error: "upstream unavailable",
+        turnAssociation: {
+          turnId: "turn-1",
+          strength: "inferred",
+          method: "log_time_within_canonical_turn",
+        },
+        evidence: {
+          sourceEventIds: [sourceEventId],
+          stability: ["observed", "unstable", "inferred"],
+          derivation: "inferred",
+        },
+      },
+    ]);
+  });
+
+  it("uses the first defensible request completion as Context baseline instead of a Turn aggregate", () => {
+    const evidence = analyzeCodexEvidence([
+      {
+        sourceEventId: "5e4a5a6d-89e0-43ad-85d9-5894fecc3a61",
+        observation: {
+          source: "codex_otel_trace",
+          producer: { name: "codex", version: "0.144.5" },
+          producerEvent: "session_task.turn",
+          occurredAt: "2026-07-17T10:36:20.000Z",
+          capturedAt: "2026-07-17T10:36:20.100Z",
+          capturePath: "otel:traces",
+          payload: {
+            records: [
+              {
+                span: {
+                  name: "session_task.turn",
+                  spanId: "turn-span-1",
+                  attributes: [
+                    { key: "turn.id", value: { stringValue: "turn-1" } },
+                    {
+                      key: "codex.turn.token_usage.input_tokens",
+                      value: { intValue: "90000" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        sourceEventId: "99648bfd-1148-43f0-8265-a4f2c8c20d89",
+        observation: {
+          source: "codex_otel_log",
+          producer: { name: "codex", version: "0.144.5" },
+          producerEvent: "codex.sse_event",
+          occurredAt: "2026-07-17T10:36:30.000Z",
+          capturedAt: "2026-07-17T10:36:30.100Z",
+          capturePath: "otel:logs",
+          payload: {
+            log_record: {
+              attributes: [
+                { key: "event.name", value: { stringValue: "codex.sse_event" } },
+                { key: "event.kind", value: { stringValue: "response.completed" } },
+                { key: "input_token_count", value: { intValue: "25000" } },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(evidence.context.firstRequestBaseline).toMatchObject({
+      tokenUsageId: "tokens:99648bfd-1148-43f0-8265-a4f2c8c20d89",
+      occupancyTokens: 25000,
+    });
+  });
+
+  it("does not rich-project observations from unsupported producer versions", () => {
+    const evidence = analyzeCodexEvidence([
+      {
+        sourceEventId: "4dc2511c-fe52-490b-ab11-095ce54a3e82",
+        observation: {
+          source: "codex_otel_log",
+          producer: { name: "codex", version: "99.0.0" },
+          producerEvent: "codex.api_request",
+          occurredAt: "2026-07-17T10:36:30.000Z",
+          capturedAt: "2026-07-17T10:36:30.100Z",
+          capturePath: "otel:logs",
+          payload: {
+            log_record: {
+              attributes: [
+                { key: "event.name", value: { stringValue: "codex.api_request" } },
+                { key: "attempt", value: { intValue: "9" } },
+                { key: "http.response.status_code", value: { intValue: "599" } },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(evidence.apiRequests).toEqual([]);
+    expect(evidence.tokenUsage).toEqual([]);
+    expect(evidence.tools).toEqual([]);
+  });
+
   it("keeps provider completion Token categories separate from inferred Context occupancy and estimated cost", () => {
     const observedAt = "2026-07-17T10:36:30.000Z";
     const evidence = analyzeCodexEvidence(

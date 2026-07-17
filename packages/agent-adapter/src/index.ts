@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type {
+  ApiRequestEvidence,
   CapabilityEvidence,
   CostEstimate,
   EvidenceSchema,
@@ -463,6 +464,7 @@ export function analyzeCodexEvidence(
   };
   const tools = new Map<string, MutableTool>();
   const lifecycle: RichSessionEvidence["lifecycle"] = [];
+  const apiRequests: ApiRequestEvidence[] = [];
   const tokenUsage: TokenUsageSample[] = [];
   const limits: RichSessionEvidence["context"]["limits"] = [];
   const capabilityEvents = new Map<
@@ -499,6 +501,13 @@ export function analyzeCodexEvidence(
   };
 
   for (const { sourceEventId, observation } of inputs) {
+    const disposition = adaptCodexObservation(observation);
+    if (
+      disposition.status === "downgraded" ||
+      disposition.status === "rejected"
+    ) {
+      continue;
+    }
     const payload = record(observation.payload);
     if (observation.source === "codex_hook") {
       const eventName =
@@ -595,6 +604,44 @@ export function analyzeCodexEvidence(
           : undefined;
       const model =
         typeof attributes.model === "string" ? attributes.model : null;
+      if (eventName === "codex.api_request") {
+        const turnAssociation = inferredTurnAssociation(
+          observation.occurredAt,
+          options.turns,
+        );
+        const successValue = attributes.success;
+        apiRequests.push({
+          id: `api-request:${sourceEventId}`,
+          occurredAt: observation.occurredAt,
+          attempt: numberField(attributes.attempt),
+          statusCode: numberField(attributes["http.response.status_code"]),
+          durationMs: numberField(attributes.duration_ms),
+          success:
+            successValue === true || successValue === "true"
+              ? true
+              : successValue === false || successValue === "false"
+                ? false
+                : null,
+          error:
+            typeof attributes["error.message"] === "string"
+              ? attributes["error.message"]
+              : typeof attributes.error === "string"
+                ? attributes.error
+                : null,
+          turnAssociation,
+          evidence: evidence(
+            [sourceEventId],
+            [
+              "observed",
+              "unstable",
+              ...(turnAssociation.strength === "inferred"
+                ? (["inferred"] as const)
+                : []),
+            ],
+            turnAssociation.strength === "inferred" ? "inferred" : "exact",
+          ),
+        });
+      }
       if (eventName === "codex.conversation_starts") {
         const contextWindow = numberField(attributes.context_window);
         const autoCompactionLimit = numberField(attributes.auto_compact_token_limit);
@@ -972,6 +1019,14 @@ export function analyzeCodexEvidence(
       },
     ];
   });
+  const firstRequestSample = sortedUsage.find(
+    (sample) => sample.sourceKind === "provider_completion",
+  );
+  const firstRequestBaseline = firstRequestSample
+    ? occupancy.find(
+        (sample) => sample.tokenUsageId === firstRequestSample.id,
+      ) ?? null
+    : null;
 
   const unavailableEvidence = evidence([], ["unavailable"], "unavailable");
   setCapability({
@@ -1026,11 +1081,14 @@ export function analyzeCodexEvidence(
     lifecycle: lifecycle.sort((left, right) =>
       left.occurredAt.localeCompare(right.occurredAt),
     ),
+    apiRequests: apiRequests.sort((left, right) =>
+      left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id),
+    ),
     tokenUsage: sortedUsage,
     context: {
       limits,
       occupancy,
-      firstRequestBaseline: occupancy[0] ?? null,
+      firstRequestBaseline,
       contribution: {
         status: "unavailable",
         method: "no_stable_passive_per_item_context_contract",

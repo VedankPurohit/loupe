@@ -103,20 +103,23 @@ export async function buildApp(options: BuildAppOptions = {}) {
     ? new ExecutionStore(databaseUrl, options.priceTable)
     : undefined;
   const candidateStore = databaseUrl ? new CandidateStore(databaseUrl) : undefined;
-  let liveSequence = 0;
-  const liveClients = new Set<NodeJS.WritableStream>();
+  const liveSequences = new Map<string, number>();
+  const liveClients = new Map<string, Set<NodeJS.WritableStream>>();
 
-  const publishSessionUpdates = (sessionIds: string[]) => {
+  const publishSessionUpdates = (organizationId: string, sessionIds: string[]) => {
     const occurredAt = new Date().toISOString();
+    const clients = liveClients.get(organizationId);
     for (const sessionId of sessionIds) {
+      const sequence = (liveSequences.get(organizationId) ?? 0) + 1;
+      liveSequences.set(organizationId, sequence);
       const event = {
-        sequence: ++liveSequence,
+        sequence,
         type: "session.updated" as const,
         sessionId,
         occurredAt,
       };
       const encoded = `id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-      for (const client of liveClients) client.write(encoded);
+      for (const client of clients ?? []) client.write(encoded);
     }
   };
 
@@ -918,8 +921,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
         });
       }
       if (results.some(({ status }) => status === "accepted" || status === "duplicate")) {
+        const organizationId = await identityStore.deviceOrganizationId(device.id);
         const sessionIds = await executionStore!.projectForDevice(device.id);
-        publishSessionUpdates(sessionIds);
+        if (organizationId) publishSessionUpdates(organizationId, sessionIds);
       }
       return { batchId: request.body.batchId, results };
     },
@@ -1464,8 +1468,18 @@ export async function buildApp(options: BuildAppOptions = {}) {
         "x-accel-buffering": "no",
       });
       reply.raw.write("retry: 1000\n\n");
-      liveClients.add(reply.raw);
-      request.raw.once("close", () => liveClients.delete(reply.raw));
+      let organizationClients = liveClients.get(reader.organization.id);
+      if (!organizationClients) {
+        organizationClients = new Set();
+        liveClients.set(reader.organization.id, organizationClients);
+      }
+      organizationClients.add(reply.raw);
+      request.raw.once("close", () => {
+        organizationClients!.delete(reply.raw);
+        if (organizationClients!.size === 0) {
+          liveClients.delete(reader.organization.id);
+        }
+      });
     },
   );
   app.post(
@@ -2100,8 +2114,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   if (identityStore && executionStore) {
     app.addHook("onClose", async () => {
-      for (const client of liveClients) client.end();
+      for (const clients of liveClients.values()) {
+        for (const client of clients) client.end();
+      }
       liveClients.clear();
+      liveSequences.clear();
       await Promise.all([
         identityStore.close(),
         executionStore.close(),

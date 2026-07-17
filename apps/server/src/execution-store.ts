@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import {
+  adaptCodexObservation,
   analyzeCodexEvidence,
   type CodexEvidenceInput,
   type CodexSource,
@@ -328,33 +329,77 @@ function otelAttributes(payload: unknown): Record<string, string> | undefined {
   return result;
 }
 
-function sourceIdentityValues(value: unknown, found = new Set<string>()): Set<string> {
-  if (Array.isArray(value)) {
-    for (const item of value) sourceIdentityValues(item, found);
-    return found;
-  }
-  const current = asRecord(value);
-  if (!current) return found;
-  for (const key of [
-    "session_id",
-    "turn_id",
-    "agent_id",
-  ]) {
-    const identity = stringField(current, key);
-    if (identity) found.add(identity);
-  }
-  const attributeKey = stringField(current, "key");
+function toCodexObservation(
+  row: Pick<
+    SourceRow,
+    | "source"
+    | "producerEvent"
+    | "producerVersion"
+    | "occurredAt"
+    | "capturedAt"
+    | "capturePath"
+    | "rawPayload"
+  >,
+) {
+  return {
+    source: row.source as CodexSource,
+    producer: { name: "codex" as const, version: row.producerVersion },
+    producerEvent: row.producerEvent,
+    occurredAt: row.occurredAt.toISOString(),
+    capturedAt: row.capturedAt.toISOString(),
+    capturePath: row.capturePath,
+    payload: row.rawPayload as Record<string, unknown>,
+  };
+}
+
+function trustedSourceIdentityValues(
+  observation: ReturnType<typeof toCodexObservation>,
+): Set<string> {
+  const disposition = adaptCodexObservation(observation);
   if (
-    attributeKey &&
-    ["session.id", "conversation.id", "turn.id", "thread.id"].includes(
-      attributeKey,
-    )
+    disposition.status === "downgraded" ||
+    disposition.status === "rejected"
   ) {
-    const wrapped = asRecord(current.value);
-    const scalar = wrapped?.stringValue ?? wrapped?.string_value;
-    if (typeof scalar === "string") found.add(scalar);
+    return new Set();
   }
-  for (const nested of Object.values(current)) sourceIdentityValues(nested, found);
+  const found = new Set<string>();
+  for (const canonical of disposition.canonical) {
+    found.add(canonical.sessionId);
+    if (canonical.turnId) found.add(canonical.turnId);
+  }
+  if (observation.source === "codex_otel_log") {
+    const attributes = otelAttributes(observation.payload);
+    for (const key of ["session.id", "conversation.id", "turn.id", "thread.id"]) {
+      const identity = attributes?.[key];
+      if (identity) found.add(identity);
+    }
+  }
+  if (observation.source === "codex_otel_trace") {
+    const payload = asRecord(observation.payload);
+    const records = Array.isArray(payload?.records) ? payload.records : [];
+    for (const item of records) {
+      const wrapper = asRecord(item);
+      const span = asRecord(wrapper?.span ?? wrapper);
+      const attributes = Array.isArray(span?.attributes) ? span.attributes : [];
+      for (const attributeValue of attributes) {
+        const attribute = asRecord(attributeValue);
+        const key = stringField(attribute, "key");
+        if (!key || !["session.id", "conversation.id", "turn.id", "thread.id"].includes(key)) {
+          continue;
+        }
+        const wrapped = asRecord(attribute?.value);
+        const scalar = wrapped?.stringValue ?? wrapped?.string_value;
+        if (typeof scalar === "string") found.add(scalar);
+      }
+    }
+  }
+  if (observation.source === "codex_rollout") {
+    const payload = asRecord(observation.payload);
+    for (const key of ["session_id", "turn_id", "agent_id", "thread_id"]) {
+      const identity = stringField(payload, key);
+      if (identity) found.add(identity);
+    }
+  }
   return found;
 }
 
@@ -367,8 +412,8 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
   for (const row of [...rows].sort((left, right) =>
     left.receivedAt.getTime() - right.receivedAt.getTime(),
   )) {
-    const payload = asRecord(row.rawPayload);
-    const sessionId = stringField(payload, "session_id");
+    const disposition = adaptCodexObservation(toCodexObservation(row));
+    const sessionId = disposition.canonical[0]?.sessionId;
     if (sessionId && !ownership.has(sessionId)) {
       ownership.set(sessionId, {
         memberId: row.memberId,
@@ -384,8 +429,15 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
       left.receivedAt.getTime() - right.receivedAt.getTime(),
   );
   for (const row of chronological) {
+    const disposition = adaptCodexObservation(toCodexObservation(row));
+    if (
+      disposition.status === "downgraded" ||
+      disposition.status === "rejected"
+    ) {
+      continue;
+    }
     const payload = asRecord(row.rawPayload);
-    const sessionId = stringField(payload, "session_id");
+    const sessionId = disposition.canonical[0]?.sessionId;
     if (row.source === "codex_hook" && sessionId) {
       const owner = ownership.get(sessionId)!;
       let session = sessions.get(sessionId);
@@ -535,14 +587,18 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
       }
       const senderThreadId = attributes.sender_thread_id;
       const receiverThreadId = attributes.receiver_thread_id;
-      const session = [...sessions.values()].find((candidate) =>
-        [...candidate.agents.values()].some(
-          (agent) =>
-            agent.codexThreadId === senderThreadId ||
-            agent.codexThreadId === receiverThreadId ||
-            agent.publicId === senderThreadId ||
-            agent.publicId === receiverThreadId,
-        ),
+      const session = [...sessions.values()].find(
+        (candidate) =>
+          candidate.ownershipInputs.some(
+            (input) => input.observedValue === row.deliveringDeviceId,
+          ) &&
+          [...candidate.agents.values()].some(
+            (agent) =>
+              agent.codexThreadId === senderThreadId ||
+              agent.codexThreadId === receiverThreadId ||
+              agent.publicId === senderThreadId ||
+              agent.publicId === receiverThreadId,
+          ),
       );
       if (!session) continue;
       let parent = [...session.agents.values()].find(
@@ -690,27 +746,29 @@ export class ExecutionStore {
       .where(eq(enrolledDevices.id, deviceId))
       .limit(1);
     if (!device) return [];
-    const rows = await this.database
-      .select({
-        id: sourceEvents.id,
-        memberId: sourceEvents.memberId,
-        deliveringDeviceId: sourceEvents.deliveringDeviceId,
-        source: sourceEvents.source,
-        producerEvent: sourceEvents.producerEvent,
-        producerVersion: sourceEvents.producerVersion,
-        occurredAt: sourceEvents.occurredAt,
-        capturedAt: sourceEvents.capturedAt,
-        receivedAt: sourceEvents.receivedAt,
-        capturePath: sourceEvents.capturePath,
-        rawPayload: sourceEvents.rawPayload,
-        gitContext: sourceEvents.gitContext,
-      })
-      .from(sourceEvents)
-      .where(eq(sourceEvents.organizationId, device.organizationId))
-      .orderBy(asc(sourceEvents.receivedAt), asc(sourceEvents.id));
-    const sessions = buildProjection(rows);
-
-    await this.database.transaction(async (transaction) => {
+    return this.database.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${device.organizationId}))`,
+      );
+      const rows = await transaction
+        .select({
+          id: sourceEvents.id,
+          memberId: sourceEvents.memberId,
+          deliveringDeviceId: sourceEvents.deliveringDeviceId,
+          source: sourceEvents.source,
+          producerEvent: sourceEvents.producerEvent,
+          producerVersion: sourceEvents.producerVersion,
+          occurredAt: sourceEvents.occurredAt,
+          capturedAt: sourceEvents.capturedAt,
+          receivedAt: sourceEvents.receivedAt,
+          capturePath: sourceEvents.capturePath,
+          rawPayload: sourceEvents.rawPayload,
+          gitContext: sourceEvents.gitContext,
+        })
+        .from(sourceEvents)
+        .where(eq(sourceEvents.organizationId, device.organizationId))
+        .orderBy(asc(sourceEvents.receivedAt), asc(sourceEvents.id));
+      const sessions = buildProjection(rows);
       await transaction
         .delete(executionSessions)
         .where(
@@ -812,8 +870,8 @@ export class ExecutionStore {
           );
         }
       }
+      return sessions.map((session) => session.canonicalId);
     });
-    return sessions.map((session) => session.canonicalId);
   }
 
   async listSessions(organizationId: string): Promise<ExecutionSession[]> {
@@ -1499,6 +1557,7 @@ export class ExecutionStore {
           capturedAt: sourceEvents.capturedAt,
           capturePath: sourceEvents.capturePath,
           rawPayload: sourceEvents.rawPayload,
+          deliveringDeviceId: sourceEvents.deliveringDeviceId,
         })
         .from(sourceEvents)
         .where(eq(sourceEvents.organizationId, organizationId))
@@ -1509,21 +1568,26 @@ export class ExecutionStore {
       ...turns.map((turn) => turn.canonicalTurnId),
       ...agents.flatMap((agent) => [agent.publicId, agent.codexThreadId].filter(Boolean) as string[]),
     ]);
+    const ownershipReconciliation = row.ownershipReconciliation as Reconciliation;
+    const deliveryDeviceIds = new Set<string>([
+      ...(row.ownerDeviceId ? [row.ownerDeviceId] : []),
+      ...ownershipReconciliation.inputs.flatMap((input) =>
+        input.source === "delivery_device" && input.observedValue
+          ? [input.observedValue]
+          : [],
+      ),
+    ]);
     const evidenceInputs: CodexEvidenceInput[] = retainedEvidence.flatMap((source) => {
-      const identities = sourceIdentityValues(source.rawPayload);
+      if (!deliveryDeviceIds.has(source.deliveringDeviceId)) {
+        return [];
+      }
+      const observation = toCodexObservation(source);
+      const identities = trustedSourceIdentityValues(observation);
       if (![...identities].some((identity) => sessionIdentity.has(identity))) return [];
       return [
         {
           sourceEventId: source.id,
-          observation: {
-            source: source.source as CodexSource,
-            producer: { name: "codex" as const, version: source.producerVersion },
-            producerEvent: source.producerEvent,
-            occurredAt: source.occurredAt.toISOString(),
-            capturedAt: source.capturedAt.toISOString(),
-            capturePath: source.capturePath,
-            payload: source.rawPayload as Record<string, unknown>,
-          },
+          observation,
         },
       ];
     });

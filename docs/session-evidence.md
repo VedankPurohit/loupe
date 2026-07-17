@@ -1,7 +1,7 @@
 # Rich Session evidence
 
-`GET /api/v1/sessions/:id` is the public contract for Tool, lifecycle, Token,
-Context, capability, and cost evidence. The browser reads this response; it does
+`GET /api/v1/sessions/:id` is the public contract for Tool, lifecycle, API
+transport-attempt, Token, Context, capability, and cost evidence. The browser reads this response; it does
 not calculate private replacements or query PostgreSQL.
 
 ## Tools and lifecycle
@@ -33,6 +33,12 @@ the unavailable complete passive capability snapshot.
 
 ## Token and Turn association
 
+Each `codex.api_request` record is exposed as a transport attempt with its
+nullable attempt number, HTTP status, duration, success/error, evidence, and
+Turn association. These observations retain their `unstable` source label; a
+log-time Turn join remains `inferred`. They are not promoted to stable logical
+Model-request identities.
+
 Each provider completion preserves these nullable categories separately:
 
 - input Tokens;
@@ -61,8 +67,9 @@ occupancy percent = input Tokens / reported Context window × 100
 ```
 
 The API returns the method, both inputs, source ids, and missing assumptions.
-The first chronologically defensible occupancy sample is the Context baseline;
-it is not an empty-Context claim. Provider input usage may differ from the
+The first chronologically defensible provider request/completion occupancy
+sample is the Context baseline; a Turn-total aggregate is never eligible. It
+is not an empty-Context claim. Provider input usage may differ from the
 exact serialized request, so the estimate remains `inferred` even when both
 numeric inputs were reported.
 

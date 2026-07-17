@@ -216,6 +216,7 @@ function detailFor(id: string, successful: boolean): ExecutionSessionDetail {
         { id: `${id}-resume`, kind: "resume", event: "SessionStart", occurredAt: failedTime, details: { source: "resume" }, turnAssociation: { turnId: `${id}-turn-2`, strength: "exact", method: "hook_turn_id" }, evidence: exactEvidence },
         { id: `${id}-skill`, kind: "skill", event: "SKILL.md accessed", occurredAt: firstToolTime, details: { name: "tdd", interpretation: "access, not compliance" }, turnAssociation: { turnId: `${id}-turn-1`, strength: "inferred", method: "unique_turn_time_window" }, evidence: inferredEvidence },
       ],
+      apiRequests: [],
       tokenUsage: [4200, 6800, 9100, 12400].map((input, index) => ({
         id: `${id}-tokens-${index + 1}`,
         occurredAt: new Date(Date.parse(item.firstObservedAt) + index * 240000).toISOString(),
