@@ -54,6 +54,8 @@ describe.sequential("Organization standard approval through /api/v1", () => {
   let approvedVersionId: string;
   let standardId: string;
   let firstReleaseId: string;
+  let secondStandardId: string;
+  let secondStandardReleaseId: string;
   const deviceCredentials: string[] = [];
   const candidatePackage: CandidatePackage = {
     files: [
@@ -198,6 +200,71 @@ describe.sequential("Organization standard approval through /api/v1", () => {
       },
     });
 
+    const secondPackage: CandidatePackage = {
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: test-first\ndescription: Require a failing regression before implementation.\n---\n\nWork red, then green.",
+        },
+      ],
+    };
+    const secondHash = `sha256:${createHash("sha256")
+      .update(JSON.stringify(secondPackage))
+      .digest("hex")}`;
+    const secondSubmission = await app.inject({
+      method: "POST",
+      url: "/api/v1/candidates",
+      headers: { authorization: `Bearer ${analysisCredential}` },
+      payload: {
+        name: "test-first",
+        version: "1.0.0",
+        reviewerContext: "Keep implementation grounded in an observable regression.",
+        uncertainty: { level: "low", statement: "Observed in one real Turn." },
+        claims: [
+          {
+            id: "claim-2",
+            statement: "The workflow should begin with a failing regression.",
+            classification: "single_case_hypothesis",
+            citationIds: ["citation-2"],
+          },
+        ],
+        citations: [
+          {
+            id: "citation-2",
+            sessionId: "standards-session",
+            turnId: "standards-turn",
+            activityId,
+          },
+        ],
+        package: secondPackage,
+        artifactHash: secondHash,
+      },
+    });
+    expect(secondSubmission.statusCode).toBe(201);
+    const secondApproval = await app.inject({
+      method: "POST",
+      url: `/api/v1/candidates/${secondSubmission.json().candidate.id}/versions/${secondSubmission.json().version.id}/approve`,
+      headers: { cookie: administratorCookie },
+      payload: { artifactHash: secondHash },
+    });
+    expect(secondApproval.statusCode).toBe(201);
+    secondStandardId = secondApproval.json().release.standardId as string;
+    secondStandardReleaseId = secondApproval.json().release.releaseId as string;
+
+    const freshGrant = await app.inject({
+      method: "POST",
+      url: "/api/v1/device-enrollment-grants",
+      headers: { cookie: administratorCookie },
+      payload: { deviceName: "Fresh Mac" },
+    });
+    const freshEnrollment = await app.inject({
+      method: "POST",
+      url: "/api/v1/device-enrollments/redeem",
+      payload: { grant: freshGrant.json().grant },
+    });
+    deviceCredentials.push(freshEnrollment.json().credential as string);
+
     for (const credential of deviceCredentials) {
       const manifest = await app.inject({
         method: "GET",
@@ -207,21 +274,34 @@ describe.sequential("Organization standard approval through /api/v1", () => {
       expect(manifest.statusCode).toBe(200);
       expect(manifest.json()).toMatchObject({
         schemaVersion: "1",
-        state: "active",
-        mandatory: true,
-        target: {
-          name: "evidence-first",
-          version: "1.0.0",
-          artifactHash,
-          artifactUrl: expect.stringMatching(
-            /^\/api\/v1\/device\/standards\/artifacts\//,
-          ),
-          collisionPolicy: "organization_wins_preserve_personal",
-        },
+        targets: [
+          {
+            standardId,
+            name: "evidence-first",
+            version: "1.0.0",
+            artifactHash,
+            state: "active",
+            mandatory: true,
+            previousReleaseId: null,
+            artifactUrl: expect.stringMatching(
+              /^\/api\/v1\/device\/standards\/artifacts\//,
+            ),
+            collisionPolicy: "organization_wins_preserve_personal",
+          },
+          {
+            standardId: secondStandardId,
+            name: "test-first",
+            releaseId: secondStandardReleaseId,
+            artifactHash: secondHash,
+            state: "active",
+            mandatory: true,
+            previousReleaseId: null,
+          },
+        ],
       });
       const artifact = await app.inject({
         method: "GET",
-        url: manifest.json().target.artifactUrl,
+        url: manifest.json().targets[0].artifactUrl,
         headers: { authorization: `Bearer ${credential}` },
       });
       expect(artifact.statusCode).toBe(200);
@@ -299,6 +379,27 @@ describe.sequential("Organization standard approval through /api/v1", () => {
       }
     }
 
+    const unsupportedRepeatedPattern = await app.inject({
+      method: "POST",
+      url: editUrl,
+      headers: { cookie: administratorCookie },
+      payload: {
+        ...editPayload,
+        claims: [
+          {
+            ...editPayload.claims[0],
+            classification: "repeated_pattern",
+          },
+        ],
+      },
+    });
+    expect(unsupportedRepeatedPattern.statusCode).toBe(422);
+    expect(unsupportedRepeatedPattern.json()).toMatchObject({
+      error: {
+        code: "CANDIDATE_REPEATED_PATTERN_REQUIRES_TWO_REAL_TURNS",
+      },
+    });
+
     const edited = await app.inject({
       method: "POST",
       url: editUrl,
@@ -320,11 +421,21 @@ describe.sequential("Organization standard approval through /api/v1", () => {
       url: "/api/v1/device/standards/manifest",
       headers: { authorization: `Bearer ${deviceCredentials[0]}` },
     });
-    expect(manifest.json().target).toMatchObject({
-      releaseId: firstReleaseId,
-      artifactHash,
-      version: "1.0.0",
-    });
+    expect(manifest.json().targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          standardId,
+          releaseId: firstReleaseId,
+          artifactHash,
+          version: "1.0.0",
+        }),
+        expect.objectContaining({
+          standardId: secondStandardId,
+          releaseId: secondStandardReleaseId,
+          state: "active",
+        }),
+      ]),
+    );
 
     const rejected = await app.inject({
       method: "POST",
@@ -392,17 +503,29 @@ describe.sequential("Organization standard approval through /api/v1", () => {
       url: "/api/v1/device/standards/manifest",
       headers: { authorization: `Bearer ${deviceCredentials[0]}` },
     });
-    expect(pausedManifest.json()).toMatchObject({
-      state: "paused",
-      target: { releaseId: secondReleaseId },
-      previousReleaseId: firstReleaseId,
-    });
+    expect(pausedManifest.json().targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          standardId,
+          state: "paused",
+          releaseId: secondReleaseId,
+          previousReleaseId: firstReleaseId,
+        }),
+        expect.objectContaining({
+          standardId: secondStandardId,
+          state: "active",
+          releaseId: secondStandardReleaseId,
+          previousReleaseId: null,
+        }),
+      ]),
+    );
 
     const report = await app.inject({
       method: "POST",
       url: "/api/v1/device/standards/installations",
       headers: { authorization: `Bearer ${deviceCredentials[0]}` },
       payload: {
+        standardId,
         releaseId: secondReleaseId,
         installedReleaseId: firstReleaseId,
         state: "deferred_active_session",
@@ -412,8 +535,26 @@ describe.sequential("Organization standard approval through /api/v1", () => {
     });
     expect(report.statusCode).toBe(201);
     expect(report.json()).toMatchObject({
+      standardId,
       state: "deferred_active_session",
       activeSessionIds: ["active-session-1"],
+    });
+    const crossStandardReport = await app.inject({
+      method: "POST",
+      url: "/api/v1/device/standards/installations",
+      headers: { authorization: `Bearer ${deviceCredentials[0]}` },
+      payload: {
+        standardId: secondStandardId,
+        releaseId: secondReleaseId,
+        installedReleaseId: firstReleaseId,
+        state: "installed",
+        observedAt: "2026-07-17T15:01:00.000Z",
+        activeSessionIds: [],
+      },
+    });
+    expect(crossStandardReport.statusCode).toBe(404);
+    expect(crossStandardReport.json()).toMatchObject({
+      error: { code: "STANDARD_RELEASE_NOT_FOUND" },
     });
     const administratorStatus = await app.inject({
       method: "GET",
@@ -430,6 +571,10 @@ describe.sequential("Organization standard approval through /api/v1", () => {
           activeSessionIds: ["active-session-1"],
         }),
       ],
+    });
+    expect(administratorStatus.json().items[1]).toMatchObject({
+      standardId: secondStandardId,
+      installations: [],
     });
     const otherDeviceReports = await app.inject({
       method: "GET",
@@ -450,10 +595,22 @@ describe.sequential("Organization standard approval through /api/v1", () => {
       url: "/api/v1/device/standards/manifest",
       headers: { authorization: `Bearer ${deviceCredentials[1]}` },
     });
-    expect(rolledBackManifest.json()).toMatchObject({
-      state: "active",
-      target: { releaseId: firstReleaseId, artifactHash },
-      previousReleaseId: secondReleaseId,
-    });
+    expect(rolledBackManifest.json().targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          standardId,
+          state: "active",
+          releaseId: firstReleaseId,
+          artifactHash,
+          previousReleaseId: secondReleaseId,
+        }),
+        expect.objectContaining({
+          standardId: secondStandardId,
+          state: "active",
+          releaseId: secondStandardReleaseId,
+          previousReleaseId: null,
+        }),
+      ]),
+    );
   });
 });

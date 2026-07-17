@@ -290,12 +290,25 @@ pre { max-height: 175px; overflow: auto; margin: 0; padding: 10px; color: #d7e1e
 .candidate-metadata dt { color: #657176; font-family: var(--utility); font-size: .55rem; font-weight: 800; text-transform: uppercase; }
 .candidate-metadata dd { margin: 5px 0 0; font-size: .72rem; line-height: 1.45; overflow-wrap: anywhere; }
 .candidate-metadata code { font-size: .6rem; }
+.section-heading { display: flex; justify-content: space-between; gap: 12px; align-items: end; }
+.section-heading h4 { margin: 3px 0 0; font-family: var(--display); font-size: 1.25rem; }
+.section-heading > span { color: var(--muted); font-family: var(--utility); font-size: .6rem; font-weight: 800; text-transform: uppercase; }
+.claim-review { margin: 16px 0; padding: 14px; border: 1px solid #b8c5c3; background: #eef4f1; }
+.claim-list { display: grid; gap: 8px; margin-top: 10px; }
+.claim-card { padding: 11px; border: 1px solid #c2cbc8; background: #fff; }
+.claim-card header { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.claim-card header strong { max-width: 760px; font-size: .74rem; line-height: 1.5; }
+.claim-classification, .current-release { flex: 0 0 auto; padding: 3px 5px; color: #275e66; border: 1px solid #83a9ae; font-family: var(--utility); font-size: .55rem; font-weight: 800; text-transform: uppercase; }
+.claim-citations { margin-top: 10px; }
+.claim-citations p { margin: 5px 0 0; color: var(--muted); font-size: .65rem; }
+.missing-citation { padding: 4px 7px; color: #8b3025; border: 1px solid #bf7469; font-family: var(--utility); font-size: .6rem; font-weight: 750; }
 .artifact-files { display: grid; gap: 7px; }
 .artifact-files details { border: 1px solid #c2c6c2; background: #fff; }
 .artifact-files summary { padding: 8px 10px; cursor: pointer; font-family: var(--utility); font-size: .65rem; font-weight: 800; }
 .artifact-files pre { max-height: 300px; overflow: auto; margin: 0; padding: 12px; border-top: 1px solid #d4d7d3; font-size: .68rem; line-height: 1.5; white-space: pre-wrap; }
 .citation-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .citation-list a { padding: 4px 7px; color: #176b76; border: 1px solid #74abb0; font-family: var(--utility); font-size: .6rem; font-weight: 750; }
+.citation-inventory { padding-top: 10px; border-top: 1px solid #c8cdca; }
 .candidate-actions, .inline-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: end; margin-top: 15px; }
 .candidate-actions form { display: flex; flex: 1 1 340px; gap: 8px; align-items: end; }
 .candidate-actions label, .candidate-edit label { display: grid; flex: 1; gap: 5px; font-family: var(--utility); font-size: .58rem; font-weight: 800; text-transform: uppercase; }
@@ -307,9 +320,35 @@ button.danger { border-color: #87392f; background: #9b3a2e; }
 .candidate-edit h4 { margin: 0; font-family: var(--display); font-size: 1.3rem; }
 .candidate-edit textarea { min-height: 80px; text-transform: none; }
 .candidate-edit .artifact-editor { min-height: 240px; font-family: ui-monospace, monospace; font-size: .68rem; }
+.claim-editors { display: grid; gap: 9px; }
+.claim-editors h5 { margin: 4px 0 0; font-family: var(--display); font-size: 1.05rem; }
+.claim-editors fieldset { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(180px, .5fr); gap: 10px; margin: 0; padding: 12px; border: 1px solid #c7bf9e; }
+.claim-editors legend { padding: 0 5px; font-family: var(--utility); font-size: .58rem; font-weight: 800; text-transform: uppercase; }
+.citation-checkboxes { grid-column: 1 / -1; display: grid; gap: 6px; }
+.candidate-edit .citation-checkboxes label { display: flex; gap: 7px; align-items: center; width: fit-content; font-size: .62rem; text-transform: none; }
+.candidate-edit .citation-checkboxes input { width: auto; margin: 0; }
+.citation-checkboxes p { margin: 0; color: var(--muted); font-size: .65rem; }
 .distribution-section { margin-top: 30px; padding-top: 22px; border-top: 1px solid #b8bdb9; }
 .distribution-card { margin-top: 10px; padding: 14px; border: 1px solid #bec3bf; background: white; }
 .distribution-card p { margin: 7px 0; color: var(--muted); font-size: .7rem; }
+.release-history, .installation-reports { margin-top: 16px; padding-top: 14px; border-top: 1px solid #d0d4d1; }
+.release-history > h4, .installation-reports > h4 { margin: 0 0 9px; font-family: var(--display); font-size: 1.15rem; }
+.installation-reports > h4 span { color: var(--muted); font-family: var(--utility); font-size: .62rem; }
+.release-list, .installation-list { display: grid; gap: 8px; }
+.release-list article, .installation-report { padding: 11px; border: 1px solid #c5cac6; background: #f8f8f3; }
+.release-list article > header, .installation-report > header { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.release-list dl, .installation-report dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 9px 0 0; background: #d3d6d3; }
+.release-list dl > div, .installation-report dl > div { min-width: 0; padding: 8px; background: #fff; }
+.release-list dt, .installation-report dt { color: #657176; font-family: var(--utility); font-size: .52rem; font-weight: 800; text-transform: uppercase; }
+.release-list dd, .installation-report dd { margin: 4px 0 0; font-size: .64rem; line-height: 1.4; overflow-wrap: anywhere; }
+.release-list code, .installation-report code { font-size: .58rem; }
+.installation-report header strong { display: block; margin-top: 3px; font-size: .68rem; overflow-wrap: anywhere; }
+.installation-state { flex: 0 0 auto; padding: 4px 6px; color: #285c64; border: 1px solid #7aa4aa; font-family: var(--utility); font-size: .55rem; font-weight: 800; text-transform: uppercase; }
+.installation-download_failed, .installation-verification_failed, .installation-staging_failed, .installation-switch_failed { color: #8b3025; border-color: #bf7469; background: #fae7e2; }
+.installation-installed { color: #145e54; border-color: #55a393; background: #e0f2ea; }
+.installation-deferred_active_session { color: #77551c; border-color: #c49b52; background: #fff7df; }
+.installation-message { grid-column: 1 / -1; }
+.session-id-list { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
 .success { color: #145e54; }
 .empty-copy { color: var(--muted); }
 
@@ -343,6 +382,9 @@ button.danger { border-color: #87392f; background: #9b3a2e; }
   .identity-row, .grant-form { grid-template-columns: 1fr; }
   .candidate-metadata { grid-template-columns: 1fr; }
   .candidate-actions, .candidate-actions form { align-items: stretch; flex-direction: column; }
+  .claim-card header, .release-list article > header, .installation-report > header { flex-direction: column; }
+  .claim-editors fieldset, .release-list dl, .installation-report dl { grid-template-columns: 1fr; }
+  .installation-message { grid-column: auto; }
   .device-heading { display: grid; }
 }
 

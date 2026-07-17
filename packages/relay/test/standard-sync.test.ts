@@ -25,12 +25,33 @@ const secondSkillContent =
   "---\nname: prefer-evidence\ndescription: Require evidence before recommendations.\n---\n\n# Prefer evidence v2\n";
 const secondHash =
   "sha256:39017774ebeeaa6fb42cf1d3102e8a305b449be0f5aeceff1980b00745d3df13";
+const secondStandardId = "44444444-4444-4444-8444-444444444444";
+const thirdReleaseId = "55555555-5555-4555-8555-555555555555";
+const thirdSkillContent =
+  "---\nname: guard-context\ndescription: Guard context before model calls.\n---\n\n# Guard context v2\n";
+const thirdHash =
+  "sha256:974e0cad87cffa1da56058b01b9736aba113fb7cfd85d3cc7b7ca6c8c6e653dc";
 
 interface TestDistribution {
   server: Server;
   baseUrl: string;
   statuses: Array<Record<string, unknown>>;
   artifactRequests: string[];
+}
+
+interface MultiTestTarget {
+  standardId: string;
+  name: string;
+  releaseId: string;
+  version: string;
+  artifactHash: string;
+  package: { files: Array<{ path: string; content: string }> };
+  state: "active" | "paused";
+  previousReleaseId: string | null;
+}
+
+interface MultiTestDistribution extends TestDistribution {
+  targets: MultiTestTarget[];
 }
 
 async function startDistribution(options?: {
@@ -52,23 +73,23 @@ async function startDistribution(options?: {
       response.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
           schemaVersion: "1",
-          sequence: 1,
           pollAfterSeconds: options?.pollAfterSeconds ?? 30,
           generatedAt: "2026-07-17T08:00:00.000Z",
-          state: options?.state ?? "active",
-          mandatory: true,
-          target: {
-                  standardId,
-                  name: "prefer-evidence",
-                  releaseId,
-                  version: releaseId === firstReleaseId ? "1.0.0" : "2.0.0",
-                  artifactHash: options?.artifactHash ?? approvedHash,
-                  artifactUrl: options?.relativeArtifactUrl
-                    ? `/api/v1/device/standards/artifacts/${releaseId}`
-                    : `${baseUrl}/api/v1/device/standards/artifacts/${releaseId}`,
-                  collisionPolicy: "organization_wins_preserve_personal",
-                },
-          previousReleaseId: options?.previousReleaseId ?? null,
+          targets: [{
+            standardId,
+            name: "prefer-evidence",
+            releaseId,
+            version: releaseId === firstReleaseId ? "1.0.0" : "2.0.0",
+            artifactHash: options?.artifactHash ?? approvedHash,
+            artifactUrl: options?.relativeArtifactUrl
+              ? `/api/v1/device/standards/artifacts/${releaseId}`
+              : `${baseUrl}/api/v1/device/standards/artifacts/${releaseId}`,
+            collisionPolicy: "organization_wins_preserve_personal",
+            sequence: 1,
+            state: options?.state ?? "active",
+            mandatory: true,
+            previousReleaseId: options?.previousReleaseId ?? null,
+          }],
         }),
       );
       return;
@@ -120,6 +141,98 @@ async function startDistribution(options?: {
   return { server, baseUrl, statuses, artifactRequests };
 }
 
+async function startMultiStandardDistribution(): Promise<MultiTestDistribution> {
+  const statuses: Array<Record<string, unknown>> = [];
+  const artifactRequests: string[] = [];
+  let baseUrl = "";
+  const targets = [
+    {
+      standardId,
+      name: "prefer-evidence",
+      releaseId: firstReleaseId,
+      version: "1.0.0",
+      artifactHash: approvedHash,
+      package: { files: [{ path: "SKILL.md", content: skillContent }] },
+      state: "active" as const,
+      previousReleaseId: null,
+    },
+    {
+      standardId: secondStandardId,
+      name: "guard-context",
+      releaseId: secondReleaseId,
+      version: "1.0.0",
+      artifactHash: secondHash,
+      package: { files: [{ path: "SKILL.md", content: secondSkillContent }] },
+      state: "active" as const,
+      previousReleaseId: null,
+    },
+  ];
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/api/v1/device/standards/manifest") {
+      response.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          schemaVersion: "1",
+          pollAfterSeconds: 30,
+          generatedAt: "2026-07-17T08:00:00.000Z",
+          targets: targets.map((target) => ({
+            ...target,
+            package: undefined,
+            artifactUrl: `${baseUrl}/api/v1/device/standards/artifacts/${target.releaseId}`,
+            collisionPolicy: "organization_wins_preserve_personal",
+            sequence: 1,
+            state: target.state,
+            mandatory: true,
+            previousReleaseId: target.previousReleaseId,
+          })),
+        }),
+      );
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      request.url?.startsWith("/api/v1/device/standards/artifacts/")
+    ) {
+      artifactRequests.push(request.url);
+      const releaseId = request.url.split("/").at(-1)!;
+      const target = targets.find((item) => item.releaseId === releaseId);
+      if (!target) {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          releaseId: target.releaseId,
+          standardId: target.standardId,
+          name: target.name,
+          version: target.version,
+          artifactHash: target.artifactHash,
+          package: target.package,
+        }),
+      );
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      request.url === "/api/v1/device/standards/installations"
+    ) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      statuses.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+      response.writeHead(204).end();
+      return;
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("test server did not bind");
+  baseUrl = `http://127.0.0.1:${address.port}`;
+  return { server, baseUrl, statuses, artifactRequests, targets };
+}
+
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
@@ -133,6 +246,146 @@ describe("mandatory Organization standard synchronization", () => {
   afterEach(async () => {
     await Promise.all(servers.splice(0).map(closeServer));
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  it("installs every mandatory standard from one manifest on a fresh Enrolled device", async () => {
+    const distribution = await startMultiStandardDistribution();
+    servers.push(distribution.server);
+    const installRoot = join(tmpdir(), `standard-sync-multi-${randomUUID()}`);
+    roots.push(installRoot);
+
+    const result = await syncOrganizationStandardOnce({
+      installRoot,
+      baseUrl: distribution.baseUrl,
+      deviceCredential: "device_multi_standard",
+      activeSessionIds: async () => [],
+    });
+
+    for (const [targetStandardId, expectedContent] of [
+      [standardId, skillContent],
+      [secondStandardId, secondSkillContent],
+    ] as const) {
+      const namespace = organizationStandardNamespace(installRoot, targetStandardId);
+      const activeTarget = await readlink(join(namespace, "current"));
+      expect(await readFile(join(namespace, activeTarget, "SKILL.md"), "utf8")).toBe(
+        expectedContent,
+      );
+    }
+    expect(result.statuses).toEqual([
+      expect.objectContaining({
+        standardId,
+        releaseId: firstReleaseId,
+        state: "installed",
+      }),
+      expect.objectContaining({
+        standardId: secondStandardId,
+        releaseId: secondReleaseId,
+        state: "installed",
+      }),
+    ]);
+    expect(distribution.statuses).toEqual(result.statuses);
+  });
+
+  it("leaves one paused standard unchanged while another standard advances", async () => {
+    const distribution = await startMultiStandardDistribution();
+    servers.push(distribution.server);
+    const installRoot = join(tmpdir(), `standard-sync-independent-pause-${randomUUID()}`);
+    roots.push(installRoot);
+    const sync = () =>
+      syncOrganizationStandardOnce({
+        installRoot,
+        baseUrl: distribution.baseUrl,
+        deviceCredential: "device_independent_pause",
+        activeSessionIds: async () => [],
+      });
+    await sync();
+    const pausedNamespace = organizationStandardNamespace(installRoot, standardId);
+    const pausedBefore = await readlink(join(pausedNamespace, "current"));
+
+    distribution.targets[0]!.state = "paused";
+    Object.assign(distribution.targets[1]!, {
+      releaseId: thirdReleaseId,
+      version: "2.0.0",
+      artifactHash: thirdHash,
+      package: { files: [{ path: "SKILL.md", content: thirdSkillContent }] },
+      previousReleaseId: secondReleaseId,
+    });
+    const result = await sync();
+
+    expect(result.statuses).toEqual([
+      expect.objectContaining({
+        standardId,
+        releaseId: firstReleaseId,
+        installedReleaseId: firstReleaseId,
+        state: "idle",
+      }),
+      expect.objectContaining({
+        standardId: secondStandardId,
+        releaseId: thirdReleaseId,
+        installedReleaseId: thirdReleaseId,
+        state: "installed",
+      }),
+    ]);
+    expect(await readlink(join(pausedNamespace, "current"))).toBe(pausedBefore);
+    expect(
+      await readlink(join(organizationStandardNamespace(installRoot, secondStandardId), "current")),
+    ).toBe(join("versions", thirdReleaseId));
+    expect(distribution.artifactRequests).toEqual([
+      `/api/v1/device/standards/artifacts/${firstReleaseId}`,
+      `/api/v1/device/standards/artifacts/${secondReleaseId}`,
+      `/api/v1/device/standards/artifacts/${thirdReleaseId}`,
+    ]);
+  });
+
+  it("rolls back one standard without changing another standard", async () => {
+    const distribution = await startMultiStandardDistribution();
+    servers.push(distribution.server);
+    const installRoot = join(tmpdir(), `standard-sync-independent-rollback-${randomUUID()}`);
+    roots.push(installRoot);
+    const sync = () =>
+      syncOrganizationStandardOnce({
+        installRoot,
+        baseUrl: distribution.baseUrl,
+        deviceCredential: "device_independent_rollback",
+        activeSessionIds: async () => [],
+      });
+    await sync();
+    Object.assign(distribution.targets[1]!, {
+      releaseId: thirdReleaseId,
+      version: "2.0.0",
+      artifactHash: thirdHash,
+      package: { files: [{ path: "SKILL.md", content: thirdSkillContent }] },
+      previousReleaseId: secondReleaseId,
+    });
+    await sync();
+    const unaffectedNamespace = organizationStandardNamespace(installRoot, standardId);
+    const unaffectedBefore = await readlink(join(unaffectedNamespace, "current"));
+
+    Object.assign(distribution.targets[1]!, {
+      releaseId: secondReleaseId,
+      version: "1.0.0",
+      artifactHash: secondHash,
+      package: { files: [{ path: "SKILL.md", content: secondSkillContent }] },
+      previousReleaseId: thirdReleaseId,
+    });
+    const rollback = await sync();
+
+    expect(rollback.statuses).toEqual([
+      expect.objectContaining({
+        standardId,
+        installedReleaseId: firstReleaseId,
+        state: "installed",
+      }),
+      expect.objectContaining({
+        standardId: secondStandardId,
+        installedReleaseId: secondReleaseId,
+        state: "rolled_back",
+      }),
+    ]);
+    expect(await readlink(join(unaffectedNamespace, "current"))).toBe(unaffectedBefore);
+    expect(
+      await readlink(join(organizationStandardNamespace(installRoot, secondStandardId), "current")),
+    ).toBe(join("versions", secondReleaseId));
   });
 
   it("installs the one approved exact artifact on every Enrolled device without touching a personal skill", async () => {
@@ -202,13 +455,13 @@ describe("mandatory Organization standard synchronization", () => {
       activeSessionIds: async () => [],
     });
 
-    expect(result.status).toMatchObject({
+    expect(result.statuses[0]).toMatchObject({
       state: "download_failed",
       installedReleaseId: firstReleaseId,
       failure: { stage: "download", code: "STANDARD_DOWNLOAD_HTTP_503" },
     });
     expect(await readlink(join(namespace, "current"))).toBe(activeBefore);
-    expect(distribution.statuses.at(-1)).toMatchObject(result.status);
+    expect(distribution.statuses.at(-1)).toMatchObject(result.statuses[0]);
   });
 
   it("polls repeatedly at the bounded server-directed interval until the daemon is stopped", async () => {
@@ -248,7 +501,7 @@ describe("mandatory Organization standard synchronization", () => {
       activeSessionIds: async () => [],
     });
 
-    expect(result.status.state).toBe("installed");
+    expect(result.statuses[0]?.state).toBe("installed");
   });
 
   it("honors Administrator pause without changing or forgetting the installed release", async () => {
@@ -274,7 +527,7 @@ describe("mandatory Organization standard synchronization", () => {
       activeSessionIds: async () => [],
     });
 
-    expect(result.status).toMatchObject({
+    expect(result.statuses[0]).toMatchObject({
       state: "idle",
       releaseId: firstReleaseId,
       installedReleaseId: firstReleaseId,
@@ -309,7 +562,7 @@ describe("mandatory Organization standard synchronization", () => {
     const rollback = await sync();
 
     const namespace = organizationStandardNamespace(installRoot, standardId);
-    expect(rollback.status.state).toBe("rolled_back");
+    expect(rollback.statuses[0]?.state).toBe("rolled_back");
     expect(await readlink(join(namespace, "current"))).toBe(
       join("versions", firstReleaseId),
     );
@@ -342,7 +595,7 @@ describe("mandatory Organization standard synchronization", () => {
 
     const recovered = await sync();
 
-    expect(recovered.status).toMatchObject({
+    expect(recovered.statuses[0]).toMatchObject({
       state: "installed",
       installedReleaseId: firstReleaseId,
     });
@@ -374,7 +627,7 @@ describe("mandatory Organization standard synchronization", () => {
           now: new Date("2026-07-17T08:01:00.000Z"),
         }),
     });
-    expect(deferred.status).toMatchObject({
+    expect(deferred.statuses[0]).toMatchObject({
       state: "deferred_active_session",
       installedReleaseId: null,
       activeSessionIds: ["session-active"],
@@ -393,7 +646,7 @@ describe("mandatory Organization standard synchronization", () => {
       deviceCredential: "device_active_session",
       activeSessionIds: async () => listActiveSessionIds({ databasePath }),
     });
-    expect(installed.status.state).toBe("installed");
+    expect(installed.statuses[0]?.state).toBe("installed");
   });
 
   it("reports a staging failure without removing an already-owned destination", async () => {
@@ -410,13 +663,13 @@ describe("mandatory Organization standard synchronization", () => {
       activeSessionIds: async () => [],
     });
 
-    expect(result.status).toMatchObject({
+    expect(result.statuses[0]).toMatchObject({
       state: "staging_failed",
       installedReleaseId: null,
       failure: { stage: "staging" },
     });
     expect(await readFile(installRoot, "utf8")).toBe("member-owned path");
-    expect(distribution.statuses.at(-1)).toMatchObject(result.status);
+    expect(distribution.statuses.at(-1)).toMatchObject(result.statuses[0]);
   });
 
   it("rejects a changed unapproved package and keeps the approved release current", async () => {
@@ -443,7 +696,7 @@ describe("mandatory Organization standard synchronization", () => {
     };
     const rejected = await sync();
 
-    expect(rejected.status).toMatchObject({
+    expect(rejected.statuses[0]).toMatchObject({
       state: "verification_failed",
       installedReleaseId: firstReleaseId,
       failure: { stage: "verification", code: "STANDARD_ARTIFACT_HASH_MISMATCH" },
@@ -467,7 +720,7 @@ describe("mandatory Organization standard synchronization", () => {
       activeSessionIds: async () => [],
     });
 
-    expect(result.status).toMatchObject({
+    expect(result.statuses[0]).toMatchObject({
       state: "switch_failed",
       failure: { stage: "switch" },
     });

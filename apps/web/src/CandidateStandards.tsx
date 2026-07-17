@@ -8,6 +8,23 @@ import type {
 
 type Message = { tone: "success" | "error"; text: string };
 
+const claimClassificationLabels = {
+  repeated_pattern: "Repeated pattern",
+  single_case_hypothesis: "Single-case hypothesis",
+  descriptive: "Descriptive",
+} as const;
+
+const installationStateLabels = {
+  idle: "Idle",
+  deferred_active_session: "Deferred active session",
+  installed: "Installed",
+  download_failed: "Download failed",
+  verification_failed: "Verification failed",
+  staging_failed: "Staging failed",
+  switch_failed: "Switch failed",
+  rolled_back: "Rolled back",
+} as const;
+
 async function errorMessage(response: Response, fallback: string) {
   const body = (await response.json().catch(() => undefined)) as
     | { error?: { message?: string } }
@@ -137,6 +154,16 @@ export function CandidateStandards() {
         content: String(data.get(`file-${index}`) ?? ""),
       })),
     };
+    const claims = item.version.claims.map((claim, index) => ({
+      id: claim.id,
+      statement: String(data.get(`claim-statement-${index}`) ?? ""),
+      classification: String(
+        data.get(`claim-classification-${index}`) ?? claim.classification,
+      ) as typeof claim.classification,
+      citationIds: data
+        .getAll(`claim-citations-${index}`)
+        .map((citationId) => String(citationId)),
+    }));
     const artifactHash = await hashPackage(candidatePackage);
     const response = await fetch(
       `/api/v1/candidates/${item.candidate.id}/versions/${item.version.id}/edit`,
@@ -150,7 +177,7 @@ export function CandidateStandards() {
             level: data.get("uncertaintyLevel"),
             statement: data.get("uncertaintyStatement"),
           },
-          claims: item.version.claims,
+          claims,
           package: candidatePackage,
           artifactHash,
         }),
@@ -213,7 +240,11 @@ export function CandidateStandards() {
       )}
       <div className="candidate-list">
         {orderedCandidates.map((item) => (
-          <article className="candidate-review" key={item.version.id}>
+          <article
+            className="candidate-review"
+            aria-label={`${item.candidate.name} Candidate version ${item.version.version}`}
+            key={item.version.id}
+          >
             <header className="candidate-heading">
               <div>
                 <span className="detail-label">Candidate skill</span>
@@ -244,6 +275,61 @@ export function CandidateStandards() {
                 </dd>
               </div>
             </dl>
+            <section className="claim-review" aria-label="Factual claims">
+              <div className="section-heading">
+                <div>
+                  <span className="detail-label">Evidence review</span>
+                  <h4>Factual claims</h4>
+                </div>
+                <span>{item.version.claims.length} claim{item.version.claims.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="claim-list">
+                {item.version.claims.map((claim) => {
+                  const supportingCitations = item.version.citations.filter((citation) =>
+                    claim.citationIds.includes(citation.id),
+                  );
+                  const missingCitationIds = claim.citationIds.filter(
+                    (citationId) =>
+                      !item.version.citations.some(
+                        (citation) => citation.id === citationId,
+                      ),
+                  );
+                  return (
+                    <article
+                      className="claim-card"
+                      aria-label={`Factual claim ${claim.statement}`}
+                      key={claim.id}
+                    >
+                      <header>
+                        <strong>{claim.statement}</strong>
+                        <span className="claim-classification">
+                          {claimClassificationLabels[claim.classification]}
+                        </span>
+                      </header>
+                      <div className="claim-citations">
+                        <span className="detail-label">Supporting evidence</span>
+                        {supportingCitations.length === 0 && missingCitationIds.length === 0 ? (
+                          <p>No citations mapped to this claim.</p>
+                        ) : (
+                          <div className="citation-list">
+                            {supportingCitations.map((citation) => (
+                              <a href={citation.links.browser} key={citation.id}>
+                                {citation.sessionId} · {citation.turnId}
+                              </a>
+                            ))}
+                            {missingCitationIds.map((citationId) => (
+                              <span className="missing-citation" key={citationId}>
+                                Missing citation · {citationId}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
             <div className="artifact-files">
               {item.version.package.files.map((file) => (
                 <details key={file.path} open={file.path === "SKILL.md"}>
@@ -252,7 +338,7 @@ export function CandidateStandards() {
                 </details>
               ))}
             </div>
-            <div className="citation-list" aria-label="Evidence citations">
+            <div className="citation-list citation-inventory" aria-label="Evidence citation inventory">
               {item.version.citations.map((citation) => (
                 <a href={citation.links.browser} key={citation.id}>
                   {citation.sessionId} · {citation.turnId}
@@ -311,6 +397,54 @@ export function CandidateStandards() {
                     required
                   />
                 </label>
+                <section className="claim-editors" aria-label="Edit factual claims">
+                  <h5>Factual claims and supporting evidence</h5>
+                  {item.version.claims.map((claim, index) => (
+                    <fieldset key={claim.id}>
+                      <legend>Factual claim {index + 1}</legend>
+                      <label>
+                        Claim statement
+                        <textarea
+                          name={`claim-statement-${index}`}
+                          defaultValue={claim.statement}
+                          required
+                          maxLength={2_000}
+                        />
+                      </label>
+                      <label>
+                        Classification
+                        <select
+                          name={`claim-classification-${index}`}
+                          defaultValue={claim.classification}
+                        >
+                          <option value="descriptive">Descriptive</option>
+                          <option value="single_case_hypothesis">
+                            Single-case hypothesis
+                          </option>
+                          <option value="repeated_pattern">Repeated pattern</option>
+                        </select>
+                      </label>
+                      <div className="citation-checkboxes">
+                        <span className="detail-label">Claim citations</span>
+                        {item.version.citations.length === 0 ? (
+                          <p>No evidence citations are available.</p>
+                        ) : (
+                          item.version.citations.map((citation) => (
+                            <label key={citation.id}>
+                              <input
+                                type="checkbox"
+                                name={`claim-citations-${index}`}
+                                value={citation.id}
+                                defaultChecked={claim.citationIds.includes(citation.id)}
+                              />
+                              <span>{citation.sessionId} · {citation.turnId}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    </fieldset>
+                  ))}
+                </section>
                 {item.version.package.files.map((file, index) => (
                   <label key={file.path}>
                     {file.path}
@@ -350,10 +484,127 @@ export function CandidateStandards() {
             <p>
               Target {standard.target?.version ?? "none"} · manifest sequence {standard.sequence}
             </p>
-            <p>
-              {standard.installations.length} Device status report
-              {standard.installations.length === 1 ? "" : "s"}
-            </p>
+            <section className="release-history" aria-label="Release history">
+              <h4>Release history</h4>
+              {standard.releases.length === 0 ? (
+                <p>No releases have been approved.</p>
+              ) : (
+                <div className="release-list">
+                  {standard.releases.map((release) => (
+                    <article key={release.releaseId}>
+                      <header>
+                        <strong>Version {release.version}</strong>
+                        {release.releaseId === standard.target?.releaseId && (
+                          <span className="current-release">Current target</span>
+                        )}
+                      </header>
+                      <dl>
+                        <div>
+                          <dt>Release ID</dt>
+                          <dd><code>{release.releaseId}</code></dd>
+                        </div>
+                        <div>
+                          <dt>Approved at</dt>
+                          <dd><time dateTime={release.approvedAt}>{release.approvedAt}</time></dd>
+                        </div>
+                        <div>
+                          <dt>Artifact hash</dt>
+                          <dd><code>{release.artifactHash}</code></dd>
+                        </div>
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+            <section className="installation-reports" aria-label="Device installation reports">
+              <h4>
+                Device installation reports <span>{standard.installations.length}</span>
+              </h4>
+              {standard.installations.length === 0 ? (
+                <p>No Device installation reports received.</p>
+              ) : (
+                <div className="installation-list">
+                  {standard.installations.map((installation) => (
+                    <article
+                      className="installation-report"
+                      aria-label={`Device ${installation.deviceId}`}
+                      key={`${installation.deviceId}-${installation.serverReceivedAt}`}
+                    >
+                      <header>
+                        <div>
+                          <span className="detail-label">Device</span>
+                          <strong>{installation.deviceId}</strong>
+                        </div>
+                        <span className={`installation-state installation-${installation.state}`}>
+                          {installationStateLabels[installation.state]}
+                        </span>
+                      </header>
+                      <dl>
+                        <div>
+                          <dt>Installed release</dt>
+                          <dd>
+                            {installation.installedReleaseId ? (
+                              <code>{installation.installedReleaseId}</code>
+                            ) : "None"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Reported release</dt>
+                          <dd>
+                            {installation.releaseId ? (
+                              <code>{installation.releaseId}</code>
+                            ) : "None"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Observed at</dt>
+                          <dd>
+                            <time dateTime={installation.observedAt}>
+                              {installation.observedAt}
+                            </time>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Received at</dt>
+                          <dd>
+                            <time dateTime={installation.serverReceivedAt}>
+                              {installation.serverReceivedAt}
+                            </time>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Active Session IDs</dt>
+                          <dd>
+                            {installation.activeSessionIds.length === 0 ? (
+                              "None"
+                            ) : (
+                              <ul className="session-id-list">
+                                {installation.activeSessionIds.map((sessionId) => (
+                                  <li key={sessionId}><code>{sessionId}</code></li>
+                                ))}
+                              </ul>
+                            )}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Failure stage</dt>
+                          <dd>{installation.failure?.stage ?? "None"}</dd>
+                        </div>
+                        <div>
+                          <dt>Failure code</dt>
+                          <dd>{installation.failure?.code ?? "None"}</dd>
+                        </div>
+                        <div className="installation-message">
+                          <dt>Failure message</dt>
+                          <dd>{installation.failure?.message ?? "None"}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
             <div className="inline-actions">
               <button
                 type="button"

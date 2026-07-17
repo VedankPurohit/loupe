@@ -508,6 +508,9 @@ export const deviceStandardInstallations = pgTable(
     organizationId: uuid("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "restrict" }),
+    standardId: uuid("standard_id")
+      .notNull()
+      .references(() => organizationStandards.id, { onDelete: "restrict" }),
     releaseId: uuid("release_id").references(() => organizationStandardReleases.id, {
       onDelete: "restrict",
     }),
@@ -528,6 +531,7 @@ export const deviceStandardInstallations = pgTable(
     index("device_standard_installations_organization_idx").on(
       table.organizationId,
     ),
+    index("device_standard_installations_standard_idx").on(table.standardId),
   ],
 );
 

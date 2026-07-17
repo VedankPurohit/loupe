@@ -725,16 +725,16 @@ export const DeviceStandardTargetSchema = z.object({
   artifactHash: CandidateSubmissionRequestSchema.shape.artifactHash,
   artifactUrl: z.string().min(1),
   collisionPolicy: z.literal("organization_wins_preserve_personal"),
+  sequence: z.number().int().nonnegative(),
+  state: z.enum(["active", "paused"]),
+  mandatory: z.literal(true),
+  previousReleaseId: z.uuid().nullable(),
 });
 export const DeviceStandardManifestSchema = z.object({
   schemaVersion: z.literal("1"),
-  sequence: z.number().int().nonnegative(),
   pollAfterSeconds: z.number().int().min(5).max(300),
   generatedAt: z.iso.datetime(),
-  state: z.enum(["active", "paused"]),
-  mandatory: z.literal(true),
-  target: DeviceStandardTargetSchema.nullable(),
-  previousReleaseId: z.uuid().nullable(),
+  targets: z.array(DeviceStandardTargetSchema),
 });
 export const DeviceStandardArtifactSchema = z.object({
   standardId: z.uuid(),
@@ -761,6 +761,7 @@ export const DeviceStandardInstallationFailureSchema = z.object({
   message: z.string().trim().min(1).max(2_000),
 });
 export const DeviceStandardInstallationReportRequestSchema = z.object({
+  standardId: z.uuid(),
   releaseId: z.uuid().nullable(),
   installedReleaseId: z.uuid().nullable(),
   state: DeviceStandardInstallationStateSchema,

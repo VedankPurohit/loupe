@@ -25,7 +25,7 @@ export const minimumStandardPollIntervalMs = 5_000;
 export const maximumStandardPollIntervalMs = 5 * 60_000;
 export const defaultStandardPollIntervalMs = 30_000;
 
-type OrganizationStandardTarget = NonNullable<DeviceStandardManifest["target"]>;
+type OrganizationStandardTarget = DeviceStandardManifest["targets"][number];
 type OrganizationStandardManifest = DeviceStandardManifest;
 type StandardInstallationStatus = DeviceStandardInstallationReportRequest;
 type StandardArtifact = DeviceStandardArtifact;
@@ -42,7 +42,7 @@ interface InstalledState {
 
 export interface StandardSyncResult {
   manifest: OrganizationStandardManifest;
-  status: StandardInstallationStatus;
+  statuses: StandardInstallationStatus[];
   nextPollAfterMs: number;
 }
 
@@ -366,114 +366,84 @@ async function installArtifact(options: {
   return state;
 }
 
-/**
- * Synchronizes one mandatory Organization standard manifest. The Organization
- * namespace is separate from member-owned skill directories by construction.
- */
-export async function syncOrganizationStandardOnce(
-  options: StandardSyncOptions,
-): Promise<StandardSyncResult> {
-  const fetcher = options.fetch ?? globalThis.fetch;
-  const observedAt = (options.now?.() ?? new Date()).toISOString();
-  const manifest = parseManifest(
-    await requestJson(
-      `${options.baseUrl.replace(/\/$/, "")}/api/v1/device/standards/manifest`,
-      options.deviceCredential,
-      fetcher,
-    ),
-  );
-  const nextPollAfterMs = boundedPollInterval(manifest.pollAfterSeconds);
-  const manifestNamespace = manifest.target
-    ? organizationStandardNamespace(options.installRoot, manifest.target.standardId)
-    : null;
-  let manifestInstalled: InstalledState | null = null;
-  if (manifestNamespace) {
-    try {
-        await mkdir(manifestNamespace, { recursive: true });
-        manifestInstalled = await recoverStandardNamespace({
-          namespace: manifestNamespace,
-          standardId: manifest.target!.standardId,
-          now: observedAt,
-        });
-    } catch (error) {
-      const fsCode = (error as NodeJS.ErrnoException).code ?? "FAILED";
-      const switchCollision = fsCode === "EINVAL";
-      const status: StandardInstallationStatus = {
-        releaseId: manifest.target!.releaseId,
-        installedReleaseId: null,
-        state: switchCollision ? "switch_failed" : "staging_failed",
-        observedAt,
-        activeSessionIds: [],
-        failure: {
-          stage: switchCollision ? "switch" : "staging",
-          code: `STANDARD_${switchCollision ? "SWITCH" : "STAGING"}_${fsCode}`.slice(0, 120),
-          message: switchCollision
-            ? "The atomic current pointer collides with unmanaged content; it was left unchanged."
-            : "The Organization-owned staging namespace is unavailable; member-owned content was left unchanged.",
-        },
-      };
-      await reportStatus(options, status);
-      return { manifest, status, nextPollAfterMs };
-    }
-  }
-  if (manifest.state === "paused") {
-    const status: StandardInstallationStatus = {
-      releaseId: manifest.target?.releaseId ?? null,
-      installedReleaseId: manifestInstalled?.releaseId ?? null,
-      state: "idle",
-      observedAt,
-      activeSessionIds: [],
-    };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
-  }
-  const target = manifest.target;
-  if (!target) {
-    const status: StandardInstallationStatus = {
-      releaseId: null,
+async function syncOrganizationStandardTarget(options: {
+  sync: StandardSyncOptions;
+  target: OrganizationStandardTarget;
+  observedAt: string;
+  activeSessionIds: () => Promise<string[]>;
+}): Promise<StandardInstallationStatus> {
+  const { sync, target, observedAt } = options;
+  const fetcher = sync.fetch ?? globalThis.fetch;
+  const namespace = organizationStandardNamespace(sync.installRoot, target.standardId);
+  let installed: InstalledState | null;
+  try {
+    await mkdir(namespace, { recursive: true });
+    installed = await recoverStandardNamespace({
+      namespace,
+      standardId: target.standardId,
+      now: observedAt,
+    });
+  } catch (error) {
+    const fsCode = (error as NodeJS.ErrnoException).code ?? "FAILED";
+    const switchCollision = fsCode === "EINVAL";
+    return {
+      standardId: target.standardId,
+      releaseId: target.releaseId,
       installedReleaseId: null,
+      state: switchCollision ? "switch_failed" : "staging_failed",
+      observedAt,
+      activeSessionIds: [],
+      failure: {
+        stage: switchCollision ? "switch" : "staging",
+        code: `STANDARD_${switchCollision ? "SWITCH" : "STAGING"}_${fsCode}`.slice(0, 120),
+        message: switchCollision
+          ? "The atomic current pointer collides with unmanaged content; it was left unchanged."
+          : "The Organization-owned staging namespace is unavailable; member-owned content was left unchanged.",
+      },
+    };
+  }
+  if (target.state === "paused") {
+    return {
+      standardId: target.standardId,
+      releaseId: target.releaseId,
+      installedReleaseId: installed?.releaseId ?? null,
       state: "idle",
       observedAt,
       activeSessionIds: [],
     };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
   }
-  const namespace = organizationStandardNamespace(options.installRoot, target.standardId);
-  const installed = manifestInstalled;
   if (installed?.releaseId === target.releaseId && installed.artifactHash === target.artifactHash) {
-    const status: StandardInstallationStatus = {
+    return {
+      standardId: target.standardId,
       releaseId: target.releaseId,
       installedReleaseId: installed.releaseId,
       state: "installed",
       observedAt,
       activeSessionIds: [],
     };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
   }
   const activeSessionIds = await options.activeSessionIds();
   if (activeSessionIds.length > 0) {
-    const status: StandardInstallationStatus = {
+    return {
+      standardId: target.standardId,
       releaseId: target.releaseId,
       installedReleaseId: installed?.releaseId ?? null,
       state: "deferred_active_session",
       observedAt,
       activeSessionIds,
     };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
   }
   let downloadedArtifact: unknown;
   try {
     downloadedArtifact = await requestJson(
-      new URL(target.artifactUrl, `${options.baseUrl.replace(/\/$/, "")}/`).toString(),
-      options.deviceCredential,
+      new URL(target.artifactUrl, `${sync.baseUrl.replace(/\/$/, "")}/`).toString(),
+      sync.deviceCredential,
       fetcher,
     );
   } catch (error) {
     const code = error instanceof Error ? error.message : "STANDARD_DOWNLOAD_FAILED";
-    const status: StandardInstallationStatus = {
+    return {
+      standardId: target.standardId,
       releaseId: target.releaseId,
       installedReleaseId: installed?.releaseId ?? null,
       state: "download_failed",
@@ -485,14 +455,13 @@ export async function syncOrganizationStandardOnce(
         message: "The approved artifact could not be downloaded; the current version remains active.",
       },
     };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
   }
   let artifact: StandardArtifact;
   try {
     artifact = parseArtifact(downloadedArtifact);
   } catch {
-    const status: StandardInstallationStatus = {
+    return {
+      standardId: target.standardId,
       releaseId: target.releaseId,
       installedReleaseId: installed?.releaseId ?? null,
       state: "verification_failed",
@@ -504,8 +473,6 @@ export async function syncOrganizationStandardOnce(
         message: "Downloaded content is not a valid approved standard artifact.",
       },
     };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
   }
   if (
     artifact.releaseId !== target.releaseId ||
@@ -515,7 +482,8 @@ export async function syncOrganizationStandardOnce(
     artifact.artifactHash !== target.artifactHash ||
     hashPackage(artifact.package) !== target.artifactHash
   ) {
-    const status: StandardInstallationStatus = {
+    return {
+      standardId: target.standardId,
       releaseId: target.releaseId,
       installedReleaseId: installed?.releaseId ?? null,
       state: "verification_failed",
@@ -527,8 +495,6 @@ export async function syncOrganizationStandardOnce(
         message: "Downloaded artifact does not match the exact Administrator-approved hash.",
       },
     };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
   }
   let installedState: InstalledState;
   try {
@@ -541,7 +507,8 @@ export async function syncOrganizationStandardOnce(
     const switchFailure = !verificationFailure &&
       (fsCode === "EINVAL" || fsCode === "EISDIR" || fsCode === "ENOTEMPTY");
     const stage = verificationFailure ? "verification" : switchFailure ? "switch" : "staging";
-    const status: StandardInstallationStatus = {
+    return {
+      standardId: target.standardId,
       releaseId: target.releaseId,
       installedReleaseId: installed?.releaseId ?? null,
       state: verificationFailure
@@ -559,22 +526,58 @@ export async function syncOrganizationStandardOnce(
         message: `The ${stage} step failed; the prior current version remains recoverable.`,
       },
     };
-    await reportStatus(options, status);
-    return { manifest, status, nextPollAfterMs };
   }
-  const status: StandardInstallationStatus = {
+  return {
+    standardId: target.standardId,
     releaseId: target.releaseId,
     installedReleaseId: installedState.releaseId,
-    state:
-      installed?.previousReleaseId === target.releaseId ||
-      manifest.previousReleaseId === installed?.releaseId
-        ? "rolled_back"
-        : "installed",
+    state: installed?.previousReleaseId === target.releaseId ? "rolled_back" : "installed",
     observedAt,
     activeSessionIds: [],
   };
-  await reportStatus(options, status);
-  return { manifest, status, nextPollAfterMs };
+}
+
+/**
+ * Synchronizes every mandatory Organization standard in one device manifest.
+ * Each standard has an isolated Organization namespace and installation result.
+ */
+export async function syncOrganizationStandardOnce(
+  options: StandardSyncOptions,
+): Promise<StandardSyncResult> {
+  const fetcher = options.fetch ?? globalThis.fetch;
+  const observedAt = (options.now?.() ?? new Date()).toISOString();
+  const manifest = parseManifest(
+    await requestJson(
+      `${options.baseUrl.replace(/\/$/, "")}/api/v1/device/standards/manifest`,
+      options.deviceCredential,
+      fetcher,
+    ),
+  );
+  const nextPollAfterMs = boundedPollInterval(manifest.pollAfterSeconds);
+  let activeSessionIdsPromise: Promise<string[]> | undefined;
+  const activeSessionIds = () =>
+    (activeSessionIdsPromise ??= options.activeSessionIds());
+  const statuses: StandardInstallationStatus[] = [];
+  for (const target of manifest.targets) {
+    statuses.push(
+      await syncOrganizationStandardTarget({
+        sync: options,
+        target,
+        observedAt,
+        activeSessionIds,
+      }),
+    );
+  }
+  let reportError: unknown;
+  for (const status of statuses) {
+    try {
+      await reportStatus(options, status);
+    } catch (error) {
+      reportError ??= error;
+    }
+  }
+  if (reportError) throw reportError;
+  return { manifest, statuses, nextPollAfterMs };
 }
 
 function abortableSleep(milliseconds: number, signal?: AbortSignal): Promise<void> {

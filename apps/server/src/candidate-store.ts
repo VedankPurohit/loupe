@@ -116,6 +116,39 @@ function validateInstallablePackage(
   return canonicalPackage(candidatePackage);
 }
 
+function validateClaimsAgainstCitations(
+  claims: CandidateSubmissionRequest["claims"],
+  citations: EvidenceCitation[],
+): void {
+  const byId = new Map(citations.map((citation) => [citation.id, citation]));
+  for (const claim of claims) {
+    if (
+      claim.citationIds.length === 0 ||
+      claim.citationIds.some((citationId) => !byId.has(citationId))
+    ) {
+      throw new CandidateError(
+        "CANDIDATE_CLAIMS_UNCITED",
+        "Every factual Candidate claim must reference at least one submitted Evidence citation.",
+      );
+    }
+    if (claim.classification !== "repeated_pattern") continue;
+    const realTurns = new Set(
+      claim.citationIds.flatMap((id) => {
+        const citation = byId.get(id);
+        return citation?.synthetic === "real"
+          ? [`${citation.sessionId}\n${citation.turnId}`]
+          : [];
+      }),
+    );
+    if (realTurns.size < 2) {
+      throw new CandidateError(
+        "CANDIDATE_REPEATED_PATTERN_REQUIRES_TWO_REAL_TURNS",
+        "A Repeated-pattern claim requires citations to two distinct real captured Turns; Seeded evidence is illustrative only.",
+      );
+    }
+  }
+}
+
 function toResponse(
   candidate: typeof candidateSkills.$inferSelect,
   version: typeof candidateSkillVersions.$inferSelect,
@@ -180,6 +213,7 @@ function toInstallation(
 ): DeviceStandardInstallation {
   return {
     deviceId: row.deviceId,
+    standardId: row.standardId,
     releaseId: row.releaseId,
     installedReleaseId: row.installedReleaseId,
     state: row.state as DeviceStandardInstallation["state"],
@@ -217,18 +251,6 @@ export class CandidateStore {
       }
       citationIds.add(citation.id);
     }
-    for (const claim of input.claims) {
-      if (
-        claim.citationIds.length === 0 ||
-        claim.citationIds.some((citationId) => !citationIds.has(citationId))
-      ) {
-        throw new CandidateError(
-          "CANDIDATE_CLAIMS_UNCITED",
-          "Every factual Candidate claim must reference at least one submitted Evidence citation.",
-        );
-      }
-    }
-
     const resolved: EvidenceCitation[] = [];
     for (const citation of input.citations) {
       const [target] = await this.database
@@ -284,24 +306,7 @@ export class CandidateStore {
       });
     }
 
-    const byId = new Map(resolved.map((citation) => [citation.id, citation]));
-    for (const claim of input.claims) {
-      if (claim.classification !== "repeated_pattern") continue;
-      const realTurns = new Set(
-        claim.citationIds.flatMap((id) => {
-          const citation = byId.get(id);
-          return citation?.synthetic === "real"
-            ? [`${citation.sessionId}\n${citation.turnId}`]
-            : [];
-        }),
-      );
-      if (realTurns.size < 2) {
-        throw new CandidateError(
-          "CANDIDATE_REPEATED_PATTERN_REQUIRES_TWO_REAL_TURNS",
-          "A Repeated-pattern claim requires citations to two distinct real captured Turns; Seeded evidence is illustrative only.",
-        );
-      }
-    }
+    validateClaimsAgainstCitations(input.claims, resolved);
     return resolved;
   }
 
@@ -312,14 +317,6 @@ export class CandidateStore {
     input: CandidateSubmissionRequest,
   ): Promise<CandidateSubmissionResponse> {
     const candidatePackage = validateInstallablePackage(input.name, input.package);
-    for (const claim of input.claims) {
-      if (claim.citationIds.length === 0) {
-        throw new CandidateError(
-          "CANDIDATE_CLAIMS_UNCITED",
-          "Every factual Candidate claim must reference at least one submitted Evidence citation.",
-        );
-      }
-    }
     const calculatedHash = hashCandidatePackage(candidatePackage);
     if (calculatedHash !== input.artifactHash) {
       throw new CandidateError(
@@ -462,18 +459,7 @@ export class CandidateStore {
       );
     }
     const citations = current.version.citations as EvidenceCitation[];
-    const citationIds = new Set(citations.map((citation) => citation.id));
-    for (const claim of input.claims) {
-      if (
-        claim.citationIds.length === 0 ||
-        claim.citationIds.some((citationId) => !citationIds.has(citationId))
-      ) {
-        throw new CandidateError(
-          "CANDIDATE_CLAIMS_UNCITED",
-          "Every edited factual Candidate claim must retain a valid Evidence citation.",
-        );
-      }
-    }
+    validateClaimsAgainstCitations(input.claims, citations);
     const [existing] = await this.database
       .select({ id: candidateSkillVersions.id })
       .from(candidateSkillVersions)
@@ -610,57 +596,56 @@ export class CandidateStore {
   }
 
   async deviceManifest(organizationId: string): Promise<DeviceStandardManifest> {
-    const [standard] = await this.database
+    const standards = await this.database
       .select()
       .from(organizationStandards)
       .where(eq(organizationStandards.organizationId, organizationId))
-      .orderBy(desc(organizationStandards.updatedAt))
-      .limit(1);
-    if (!standard || !standard.targetReleaseId) {
-      return {
-        schemaVersion: "1",
-        sequence: 0,
-        pollAfterSeconds: 30,
-        generatedAt: new Date().toISOString(),
-        state: "active",
-        mandatory: true,
-        target: null,
-        previousReleaseId: null,
-      };
-    }
-    const [release] = await this.database
-      .select()
-      .from(organizationStandardReleases)
-      .where(
-        and(
-          eq(organizationStandardReleases.organizationId, organizationId),
-          eq(organizationStandardReleases.id, standard.targetReleaseId),
-        ),
-      )
-      .limit(1);
-    if (!release) {
-      throw new CandidateError(
-        "STANDARD_RELEASE_NOT_FOUND",
-        "The approved target release is unavailable.",
-      );
-    }
+      .orderBy(asc(organizationStandards.createdAt));
+    const targets = await Promise.all(
+      standards.map(async (standard) => {
+        if (!standard.targetReleaseId) {
+          throw new CandidateError(
+            "STANDARD_RELEASE_NOT_FOUND",
+            "The approved Organization standard has no target release.",
+          );
+        }
+        const [release] = await this.database
+          .select()
+          .from(organizationStandardReleases)
+          .where(
+            and(
+              eq(organizationStandardReleases.organizationId, organizationId),
+              eq(organizationStandardReleases.standardId, standard.id),
+              eq(organizationStandardReleases.id, standard.targetReleaseId),
+            ),
+          )
+          .limit(1);
+        if (!release) {
+          throw new CandidateError(
+            "STANDARD_RELEASE_NOT_FOUND",
+            "The approved target release is unavailable.",
+          );
+        }
+        return {
+          standardId: standard.id,
+          name: standard.name,
+          releaseId: release.id,
+          version: release.version,
+          artifactHash: release.artifactHash,
+          artifactUrl: `/api/v1/device/standards/artifacts/${release.id}`,
+          collisionPolicy: "organization_wins_preserve_personal" as const,
+          sequence: standard.manifestSequence,
+          state: standard.distributionState as "active" | "paused",
+          mandatory: true as const,
+          previousReleaseId: standard.previousReleaseId,
+        };
+      }),
+    );
     return {
       schemaVersion: "1",
-      sequence: standard.manifestSequence,
       pollAfterSeconds: 30,
       generatedAt: new Date().toISOString(),
-      state: standard.distributionState as "active" | "paused",
-      mandatory: true,
-      target: {
-        standardId: standard.id,
-        name: standard.name,
-        releaseId: release.id,
-        version: release.version,
-        artifactHash: release.artifactHash,
-        artifactUrl: `/api/v1/device/standards/artifacts/${release.id}`,
-        collisionPolicy: "organization_wins_preserve_personal",
-      },
-      previousReleaseId: standard.previousReleaseId,
+      targets,
     };
   }
 
@@ -699,13 +684,26 @@ export class CandidateStore {
     deviceId: string,
     input: DeviceStandardInstallationReportRequest,
   ): Promise<DeviceStandardInstallation> {
+    const [standard] = await this.database
+      .select({ id: organizationStandards.id })
+      .from(organizationStandards)
+      .where(
+        and(
+          eq(organizationStandards.organizationId, organizationId),
+          eq(organizationStandards.id, input.standardId),
+        ),
+      )
+      .limit(1);
+    if (!standard) {
+      throw new CandidateError("STANDARD_NOT_FOUND", "Organization standard not found.");
+    }
     for (const releaseId of [input.releaseId, input.installedReleaseId]) {
       if (!releaseId) continue;
       const release = await this.artifact(organizationId, releaseId);
-      if (!release) {
+      if (!release || release.standardId !== input.standardId) {
         throw new CandidateError(
           "STANDARD_RELEASE_NOT_FOUND",
-          "Installation status may reference only an approved Organization release.",
+          "Installation status may reference only a release of its Organization standard.",
         );
       }
     }
@@ -714,6 +712,7 @@ export class CandidateStore {
       .values({
         deviceId,
         organizationId,
+        standardId: input.standardId,
         releaseId: input.releaseId,
         installedReleaseId: input.installedReleaseId,
         state: input.state,
@@ -822,7 +821,7 @@ export class CandidateStore {
         const installations = await this.database
           .select()
           .from(deviceStandardInstallations)
-          .where(eq(deviceStandardInstallations.organizationId, organizationId))
+          .where(eq(deviceStandardInstallations.standardId, standard.id))
           .orderBy(desc(deviceStandardInstallations.serverReceivedAt));
         const target = releases.find((release) => release.id === standard.targetReleaseId);
         return {
