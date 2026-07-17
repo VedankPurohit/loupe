@@ -7,6 +7,7 @@ import type {
 } from "@workspace/contracts";
 
 import { SessionInspector } from "./SessionInspector.js";
+import { CandidateStandards } from "./CandidateStandards.js";
 
 type View =
   | { kind: "loading" }
@@ -309,6 +310,8 @@ export function App() {
           </section>
 
           <SessionInspector member={view.session.member} />
+
+          {view.session.member.role === "administrator" && <CandidateStandards />}
 
           {view.session.member.role === "administrator" && (
             <section className="card settings-card" aria-labelledby="invite-title">

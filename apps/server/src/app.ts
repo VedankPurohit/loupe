@@ -21,8 +21,14 @@ import {
   CaptureRecordIdParamsSchema,
   CaptureRecordSchema,
   CandidateHistoryResponseSchema,
+  CandidateApprovalRequestSchema,
+  CandidateApprovalResponseSchema,
+  CandidateReviewDecisionRequestSchema,
+  CandidateReviewEditRequestSchema,
+  CandidateReviewResponseSchema,
   CandidateSubmissionRequestSchema,
   CandidateSubmissionResponseSchema,
+  CandidateVersionParamsSchema,
   CitationActivityTargetResponseSchema,
   CitationTurnTargetResponseSchema,
   ComparisonActivityParamsSchema,
@@ -36,6 +42,12 @@ import {
   DeviceEnrollmentResponseSchema,
   DeviceIdParamsSchema,
   DeviceHealthResponseSchema,
+  DeviceStandardArtifactSchema,
+  DeviceStandardInstallationReportRequestSchema,
+  DeviceStandardInstallationSchema,
+  DeviceStandardInstallationsResponseSchema,
+  DeviceStandardManifestSchema,
+  DeviceStandardReleaseParamsSchema,
   EnrolledDevicesResponseSchema,
   ExecutionSessionDetailResponseSchema,
   ExecutionSessionIdParamsSchema,
@@ -48,6 +60,9 @@ import {
   InviteCodeResponseSchema,
   OrganizationActivityQuerySchema,
   OrganizationActivityResponseSchema,
+  OrganizationStandardParamsSchema,
+  OrganizationStandardRollbackRequestSchema,
+  OrganizationStandardsResponseSchema,
   RetainedSourceEventSchema,
   SourceEventBatchRequestSchema,
   SourceEventBatchResponseSchema,
@@ -179,6 +194,103 @@ export async function buildApp(options: BuildAppOptions = {}) {
       },
     });
     return true;
+  };
+
+  const authenticateAdministrator = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!identityStore) {
+      reply.status(503).send({
+        error: {
+          code: "DATABASE_UNAVAILABLE",
+          message: "Database-backed administration is unavailable.",
+        },
+      });
+      return undefined;
+    }
+    const bearer = bearerToken(request);
+    if (bearer) {
+      const analysis = await identityStore.authenticateAnalysis(bearer);
+      if (analysis) {
+        reply.status(403).send({
+          error: {
+            code: "ANALYSIS_CREDENTIAL_SCOPE_FORBIDDEN",
+            message: "Analysis credentials cannot review or distribute standards.",
+          },
+        });
+        return undefined;
+      }
+      const device = await identityStore.authenticateDevice(bearer);
+      if (device) {
+        reply.status(403).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+            message: "Device credentials cannot review or distribute standards.",
+          },
+        });
+        return undefined;
+      }
+    }
+    const token = request.cookies[browserSessionCookieName];
+    const session = token ? await identityStore.getSession(token) : undefined;
+    if (!session) {
+      reply.status(401).send({
+        error: {
+          code: "BROWSER_SESSION_REQUIRED",
+          message: "An authenticated browser session is required.",
+        },
+      });
+      return undefined;
+    }
+    if (session.member.role !== "administrator") {
+      reply.status(403).send({
+        error: {
+          code: "ADMINISTRATOR_REQUIRED",
+          message: "Administrator authority is required.",
+        },
+      });
+      return undefined;
+    }
+    return session;
+  };
+
+  const authenticateStandardsDevice = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!identityStore) {
+      reply.status(503).send({
+        error: {
+          code: "DATABASE_UNAVAILABLE",
+          message: "Database-backed Device synchronization is unavailable.",
+        },
+      });
+      return undefined;
+    }
+    if (await rejectAnalysisScope(request, reply)) return undefined;
+    const token = bearerToken(request);
+    const device = token ? await identityStore.authenticateDevice(token) : undefined;
+    if (!device) {
+      reply.status(401).send({
+        error: {
+          code: "DEVICE_CREDENTIAL_REQUIRED",
+          message: "A valid Device credential is required.",
+        },
+      });
+      return undefined;
+    }
+    const organizationId = await identityStore.deviceOrganizationId(device.id);
+    if (!organizationId) {
+      reply.status(401).send({
+        error: {
+          code: "DEVICE_CREDENTIAL_REQUIRED",
+          message: "A valid Device credential is required.",
+        },
+      });
+      return undefined;
+    }
+    return { device, organizationId };
   };
 
   app.setValidatorCompiler(validatorCompiler);
@@ -1373,6 +1485,21 @@ export async function buildApp(options: BuildAppOptions = {}) {
           503: ApiErrorSchema,
         },
       },
+      preValidation: async (request, reply) => {
+        if (!identityStore) return;
+        const token = bearerToken(request);
+        const device = token
+          ? await identityStore.authenticateDevice(token)
+          : undefined;
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      },
     },
     async (request, reply) => {
       if (!identityStore || !candidateStore) {
@@ -1442,6 +1569,359 @@ export async function buildApp(options: BuildAppOptions = {}) {
       const reader = await authenticateEvidenceReader(request, reply);
       if (!reader) return;
       return { items: await candidateStore.list(reader.organization.id) };
+    },
+  );
+  app.post(
+    "/api/v1/candidates/:candidateId/versions/:versionId/edit",
+    {
+      schema: {
+        operationId: "editCandidateSkillVersion",
+        security: browserSessionOpenApiSecurity,
+        params: CandidateVersionParamsSchema,
+        body: CandidateReviewEditRequestSchema,
+        response: {
+          201: CandidateSubmissionResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          409: ApiErrorSchema,
+          422: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Candidate review is unavailable.",
+          },
+        });
+      }
+      const administrator = await authenticateAdministrator(request, reply);
+      if (!administrator) return;
+      return reply.status(201).send(
+        await candidateStore.edit(
+          administrator.organization.id,
+          administrator.member.id,
+          request.params.candidateId,
+          request.params.versionId,
+          request.body,
+        ),
+      );
+    },
+  );
+  app.post(
+    "/api/v1/candidates/:candidateId/versions/:versionId/reject",
+    {
+      schema: {
+        operationId: "rejectCandidateSkillVersion",
+        security: browserSessionOpenApiSecurity,
+        params: CandidateVersionParamsSchema,
+        body: CandidateReviewDecisionRequestSchema,
+        response: {
+          200: CandidateSubmissionResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          409: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Candidate review is unavailable.",
+          },
+        });
+      }
+      const administrator = await authenticateAdministrator(request, reply);
+      if (!administrator) return;
+      return candidateStore.reject(
+        administrator.organization.id,
+        administrator.member.id,
+        request.params.candidateId,
+        request.params.versionId,
+        request.body.note,
+      );
+    },
+  );
+  app.post(
+    "/api/v1/candidates/:candidateId/versions/:versionId/approve",
+    {
+      schema: {
+        operationId: "approveCandidateSkillVersion",
+        security: browserSessionOpenApiSecurity,
+        params: CandidateVersionParamsSchema,
+        body: CandidateApprovalRequestSchema,
+        response: {
+          201: CandidateApprovalResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          409: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Candidate approval is unavailable.",
+          },
+        });
+      }
+      const administrator = await authenticateAdministrator(request, reply);
+      if (!administrator) return;
+      const release = await candidateStore.approve(
+        administrator.organization.id,
+        administrator.member.id,
+        request.params.candidateId,
+        request.params.versionId,
+        request.body.artifactHash,
+      );
+      return reply.status(201).send({ release });
+    },
+  );
+
+  app.get(
+    "/api/v1/device/standards/manifest",
+    {
+      schema: {
+        operationId: "getDeviceStandardManifest",
+        security: deviceCredentialOpenApiSecurity,
+        response: {
+          200: DeviceStandardManifestSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed standards are unavailable.",
+          },
+        });
+      }
+      const authentication = await authenticateStandardsDevice(request, reply);
+      if (!authentication) return;
+      return candidateStore.deviceManifest(authentication.organizationId);
+    },
+  );
+  app.get(
+    "/api/v1/device/standards/artifacts/:releaseId",
+    {
+      schema: {
+        operationId: "getApprovedDeviceStandardArtifact",
+        security: deviceCredentialOpenApiSecurity,
+        params: DeviceStandardReleaseParamsSchema,
+        response: {
+          200: DeviceStandardArtifactSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed standards are unavailable.",
+          },
+        });
+      }
+      const authentication = await authenticateStandardsDevice(request, reply);
+      if (!authentication) return;
+      const artifact = await candidateStore.artifact(
+        authentication.organizationId,
+        request.params.releaseId,
+      );
+      if (!artifact) {
+        return reply.status(404).send({
+          error: {
+            code: "STANDARD_RELEASE_NOT_FOUND",
+            message: "The approved Organization standard release was not found.",
+          },
+        });
+      }
+      return artifact;
+    },
+  );
+  app.get(
+    "/api/v1/device/standards/installations",
+    {
+      schema: {
+        operationId: "getOwnDeviceStandardInstallations",
+        security: deviceCredentialOpenApiSecurity,
+        response: {
+          200: DeviceStandardInstallationsResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed installation status is unavailable.",
+          },
+        });
+      }
+      const authentication = await authenticateStandardsDevice(request, reply);
+      if (!authentication) return;
+      return {
+        items: await candidateStore.deviceInstallations(authentication.device.id),
+      };
+    },
+  );
+  app.post(
+    "/api/v1/device/standards/installations",
+    {
+      schema: {
+        operationId: "reportOwnDeviceStandardInstallation",
+        security: deviceCredentialOpenApiSecurity,
+        body: DeviceStandardInstallationReportRequestSchema,
+        response: {
+          201: DeviceStandardInstallationSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed installation status is unavailable.",
+          },
+        });
+      }
+      const authentication = await authenticateStandardsDevice(request, reply);
+      if (!authentication) return;
+      return reply.status(201).send(
+        await candidateStore.reportInstallation(
+          authentication.organizationId,
+          authentication.device.id,
+          request.body,
+        ),
+      );
+    },
+  );
+
+  app.get(
+    "/api/v1/organization-standards",
+    {
+      schema: {
+        operationId: "listOrganizationStandards",
+        security: browserSessionOpenApiSecurity,
+        response: {
+          200: OrganizationStandardsResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: { code: "DATABASE_UNAVAILABLE", message: "Standards are unavailable." },
+        });
+      }
+      const administrator = await authenticateAdministrator(request, reply);
+      if (!administrator) return;
+      return { items: await candidateStore.standards(administrator.organization.id) };
+    },
+  );
+  for (const action of ["pause", "resume"] as const) {
+    app.post(
+      `/api/v1/organization-standards/:standardId/${action}`,
+      {
+        schema: {
+          operationId: `${action}OrganizationStandardDistribution`,
+          security: browserSessionOpenApiSecurity,
+          params: OrganizationStandardParamsSchema,
+          response: {
+            204: CandidateReviewResponseSchema.optional(),
+            401: ApiErrorSchema,
+            403: ApiErrorSchema,
+            404: ApiErrorSchema,
+            503: ApiErrorSchema,
+          },
+        },
+      },
+      async (request, reply) => {
+        if (!candidateStore) {
+          return reply.status(503).send({
+            error: { code: "DATABASE_UNAVAILABLE", message: "Standards are unavailable." },
+          });
+        }
+        const administrator = await authenticateAdministrator(request, reply);
+        if (!administrator) return;
+        await candidateStore.setDistribution(
+          administrator.organization.id,
+          request.params.standardId,
+          action === "pause" ? "paused" : "active",
+        );
+        return reply.status(204).send();
+      },
+    );
+  }
+  app.post(
+    "/api/v1/organization-standards/:standardId/rollback",
+    {
+      schema: {
+        operationId: "rollbackOrganizationStandard",
+        security: browserSessionOpenApiSecurity,
+        params: OrganizationStandardParamsSchema,
+        body: OrganizationStandardRollbackRequestSchema,
+        response: {
+          204: CandidateReviewResponseSchema.optional(),
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: { code: "DATABASE_UNAVAILABLE", message: "Standards are unavailable." },
+        });
+      }
+      const administrator = await authenticateAdministrator(request, reply);
+      if (!administrator) return;
+      await candidateStore.rollback(
+        administrator.organization.id,
+        request.params.standardId,
+        request.body.releaseId,
+      );
+      return reply.status(204).send();
     },
   );
   app.post(
@@ -1573,8 +2053,18 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof CandidateError) {
+      const status =
+        error.code === "CANDIDATE_NOT_FOUND" ||
+        error.code === "STANDARD_NOT_FOUND" ||
+        error.code === "STANDARD_RELEASE_NOT_FOUND"
+          ? 404
+          : error.code === "CANDIDATE_VERSION_EXISTS" ||
+              error.code === "CANDIDATE_REVIEW_ALREADY_DECIDED" ||
+              error.code === "CANDIDATE_APPROVAL_HASH_MISMATCH"
+            ? 409
+            : 422;
       return reply
-        .status(error.code === "CANDIDATE_VERSION_EXISTS" ? 409 : 422)
+        .status(status)
         .send({ error: { code: error.code, message: error.message } });
     }
     if (error instanceof IdentityError) {

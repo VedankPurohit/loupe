@@ -94,6 +94,9 @@ All public HTTP routes live under `/api/v1`. The initial routes are:
 - `POST /api/v1/comparisons` (selected Session/Turn evidence comparisons and stable refusals)
 - `POST/GET /api/v1/analysis-credentials` and `POST /api/v1/analysis-credentials/:id/revoke`
 - `POST/GET /api/v1/candidates` (Analysis submission and immutable Candidate history)
+- `POST /api/v1/candidates/:candidateId/versions/:versionId/{edit,reject,approve}` (Administrator browser only)
+- `GET /api/v1/device/standards/manifest` and approved artifact/install-status routes (Device credential only)
+- `GET /api/v1/organization-standards` plus pause, resume, and rollback (Administrator browser only)
 - `GET /api/v1/sessions/:id/turns/:turnId` (authorized Turn citation target)
 - `GET /api/v1/sessions/:id/activity/:sourceEventId` (authorized activity citation target)
 - `PATCH /api/v1/sessions/:id/annotations` (Session owner or Administrator)
@@ -176,6 +179,7 @@ The Playwright harness owns a disposable `agent_observer_playwright` database, c
 - [`docs/session-evidence.md`](./docs/session-evidence.md) — Tool and lifecycle coverage, Token categories and Turn association, Context methods, versioned estimated cost, capability gaps, and refusal language.
 - [`docs/organization-discovery-and-search.md`](./docs/organization-discovery-and-search.md) — filters, pagination, descriptive aggregates, annotations, deep links, and the explicit Seeded Example-pack boundary.
 - [`docs/session-comparisons.md`](./docs/session-comparisons.md) — populations, completeness, citations, real-Turn evidence rules, synthetic inclusion, and unsupported-claim refusals.
+- [`docs/organization-standards.md`](./docs/organization-standards.md) — immutable Candidate review, exact-hash approval, Device manifest/artifact scopes, atomic synchronization, failure recovery, pause, rollback, and collision policy.
 - [`docs/investigation-prototypes.md`](./docs/investigation-prototypes.md) — three working ticket-11 investigation directions, their run commands, evaluation matrix, and screenshot checklist for the user-selection gate.
 - [`docs/macos-codex-setup.md`](./docs/macos-codex-setup.md) — setup preview and consent, `launchd`, configuration backup/restore, disconnect, uninstall, recovery, and the executable first-day checkpoint.
 - [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.

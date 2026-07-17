@@ -15,6 +15,11 @@ import {
   type CaptureInput,
 } from "./index.js";
 import { readSetupState, writeSetupState } from "./setup.js";
+import {
+  listActiveSessionIds,
+  recordLocalSessionActivity,
+  runOrganizationStandardSyncDaemon,
+} from "./standard-sync.js";
 
 export async function recordCodexPayload(options: {
   stateDir: string;
@@ -25,6 +30,12 @@ export async function recordCodexPayload(options: {
 }): Promise<string> {
   const state = await readSetupState(options.stateDir);
   const now = new Date().toISOString();
+  recordLocalSessionActivity({
+    databasePath: join(options.stateDir, "relay.sqlite"),
+    producerEvent: options.producerEvent,
+    payload: options.payload,
+    observedAt: now,
+  });
   const input: CaptureInput = {
     id: randomUUID(),
     source: "prompt",
@@ -151,15 +162,32 @@ export async function runRelayDaemon(options: {
   const policyTimer = setInterval(() => {
     void refreshCapturePolicy({ stateDir: options.stateDir }).catch(() => undefined);
   }, 30_000);
+  const state = await readSetupState(options.stateDir);
+  const stopController = new AbortController();
+  const standardSync = state.credential
+    ? runOrganizationStandardSyncDaemon({
+        installRoot: join(state.codexHome, "skills"),
+        baseUrl: state.serverUrl,
+        deviceCredential: state.credential,
+        activeSessionIds: async () =>
+          listActiveSessionIds({ databasePath: join(options.stateDir, "relay.sqlite") }),
+        signal: stopController.signal,
+      })
+    : Promise.resolve();
   await new Promise<void>((resolve) => {
-    const stop = () => resolve();
+    const stop = () => {
+      stopController.abort();
+      resolve();
+    };
     options.signal?.addEventListener("abort", stop, { once: true });
     process.once("SIGTERM", stop);
     process.once("SIGINT", stop);
+    if (options.signal?.aborted) stop();
   });
   clearInterval(deliveryTimer);
   clearInterval(policyTimer);
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   );
+  await standardSync;
 }

@@ -686,6 +686,15 @@ export class IdentityStore {
     return toEnrolledDevice({ ...device, lastSeenAt: now });
   }
 
+  async deviceOrganizationId(deviceId: string): Promise<string | undefined> {
+    const [device] = await this.database
+      .select({ organizationId: enrolledDevices.organizationId })
+      .from(enrolledDevices)
+      .where(eq(enrolledDevices.id, deviceId))
+      .limit(1);
+    return device?.organizationId;
+  }
+
   async listDevices(memberId: string): Promise<EnrolledDevice[]> {
     const devices = await this.database
       .select()

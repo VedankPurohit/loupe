@@ -390,7 +390,6 @@ export const candidateSkillVersions = pgTable(
       .notNull()
       .references(() => organizationMembers.id, { onDelete: "restrict" }),
     analysisCredentialId: uuid("analysis_credential_id")
-      .notNull()
       .references(() => analysisCredentials.id, { onDelete: "restrict" }),
     submittedAt: timestamp("submitted_at", { withTimezone: true })
       .notNull()
@@ -402,6 +401,133 @@ export const candidateSkillVersions = pgTable(
       table.version,
     ),
     index("candidate_skill_versions_organization_idx").on(table.organizationId),
+  ],
+);
+
+export const candidateVersionReviews = pgTable(
+  "candidate_version_reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    candidateVersionId: uuid("candidate_version_id")
+      .notNull()
+      .references(() => candidateSkillVersions.id, { onDelete: "restrict" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    state: varchar("state", { length: 24 }).notNull(),
+    artifactHash: varchar("artifact_hash", { length: 71 }).notNull(),
+    note: text("note"),
+    decidedByMemberId: uuid("decided_by_member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("candidate_version_reviews_version_unique").on(
+      table.candidateVersionId,
+    ),
+    index("candidate_version_reviews_organization_idx").on(table.organizationId),
+  ],
+);
+
+export const organizationStandards = pgTable(
+  "organization_standards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidateSkills.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    distributionState: varchar("distribution_state", { length: 16 })
+      .notNull()
+      .default("active"),
+    targetReleaseId: uuid("target_release_id"),
+    previousReleaseId: uuid("previous_release_id"),
+    manifestSequence: integer("manifest_sequence").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("organization_standards_candidate_unique").on(table.candidateId),
+    uniqueIndex("organization_standards_org_name_unique").on(
+      table.organizationId,
+      table.name,
+    ),
+    index("organization_standards_organization_idx").on(table.organizationId),
+  ],
+);
+
+export const organizationStandardReleases = pgTable(
+  "organization_standard_releases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    standardId: uuid("standard_id")
+      .notNull()
+      .references(() => organizationStandards.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidateSkills.id, { onDelete: "restrict" }),
+    candidateVersionId: uuid("candidate_version_id")
+      .notNull()
+      .references(() => candidateSkillVersions.id, { onDelete: "restrict" }),
+    version: text("version").notNull(),
+    artifactHash: varchar("artifact_hash", { length: 71 }).notNull(),
+    artifact: jsonb("artifact").notNull(),
+    approvedByMemberId: uuid("approved_by_member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("organization_standard_releases_candidate_version_unique").on(
+      table.candidateVersionId,
+    ),
+    uniqueIndex("organization_standard_releases_standard_version_unique").on(
+      table.standardId,
+      table.version,
+    ),
+    index("organization_standard_releases_organization_idx").on(
+      table.organizationId,
+    ),
+  ],
+);
+
+export const deviceStandardInstallations = pgTable(
+  "device_standard_installations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => enrolledDevices.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    releaseId: uuid("release_id").references(() => organizationStandardReleases.id, {
+      onDelete: "restrict",
+    }),
+    installedReleaseId: uuid("installed_release_id").references(
+      () => organizationStandardReleases.id,
+      { onDelete: "restrict" },
+    ),
+    state: varchar("state", { length: 32 }).notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    activeSessionIds: jsonb("active_session_ids").notNull().default([]),
+    failure: jsonb("failure"),
+    serverReceivedAt: timestamp("server_received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("device_standard_installations_device_idx").on(table.deviceId),
+    index("device_standard_installations_organization_idx").on(
+      table.organizationId,
+    ),
   ],
 );
 

@@ -624,7 +624,7 @@ export const CandidateSubmissionRequestSchema = z.object({
 export const CandidateSkillSchema = z.object({
   id: z.uuid(),
   name: z.string(),
-  status: z.literal("pending_review"),
+  status: z.enum(["pending_review", "rejected", "approved"]),
   createdAt: z.iso.datetime(),
   deepLink: z.string().min(1),
 });
@@ -641,7 +641,13 @@ export const CandidateSkillVersionSchema = z.object({
   submittedAt: z.iso.datetime(),
   submittedBy: z.object({
     memberId: z.uuid(),
-    analysisCredentialId: z.uuid(),
+    analysisCredentialId: z.uuid().nullable(),
+  }),
+  review: z.object({
+    state: z.enum(["pending_review", "rejected", "approved"]),
+    note: z.string().nullable(),
+    decidedAt: z.iso.datetime().nullable(),
+    decidedByMemberId: z.uuid().nullable(),
   }),
 });
 export const CandidateSubmissionResponseSchema = z.object({
@@ -650,6 +656,130 @@ export const CandidateSubmissionResponseSchema = z.object({
 });
 export const CandidateHistoryResponseSchema = z.object({
   items: z.array(CandidateSubmissionResponseSchema),
+});
+
+export const CandidateVersionParamsSchema = z.object({
+  candidateId: z.uuid(),
+  versionId: z.uuid(),
+});
+export const CandidateReviewEditRequestSchema = z.object({
+  version: CandidateSubmissionRequestSchema.shape.version,
+  reviewerContext: CandidateSubmissionRequestSchema.shape.reviewerContext,
+  uncertainty: CandidateSubmissionRequestSchema.shape.uncertainty,
+  claims: CandidateSubmissionRequestSchema.shape.claims,
+  package: CandidatePackageSchema,
+  artifactHash: CandidateSubmissionRequestSchema.shape.artifactHash,
+});
+export const CandidateReviewDecisionRequestSchema = z.object({
+  note: z.string().trim().min(1).max(4_000),
+});
+export const CandidateApprovalRequestSchema = z.object({
+  artifactHash: CandidateSubmissionRequestSchema.shape.artifactHash,
+});
+export const CandidateReviewSchema = z.object({
+  state: z.enum(["pending_review", "rejected", "approved"]),
+  note: z.string().nullable(),
+  decidedAt: z.iso.datetime().nullable(),
+  decidedByMemberId: z.uuid().nullable(),
+});
+export const OrganizationStandardReleaseSchema = z.object({
+  standardId: z.uuid(),
+  releaseId: z.uuid(),
+  candidateId: z.uuid(),
+  candidateVersionId: z.uuid(),
+  name: z.string(),
+  version: z.string(),
+  artifactHash: CandidateSubmissionRequestSchema.shape.artifactHash,
+  mandatory: z.literal(true),
+  immutable: z.literal(true),
+  approvedAt: z.iso.datetime(),
+  approvedByMemberId: z.uuid(),
+});
+export const CandidateApprovalResponseSchema = z.object({
+  release: OrganizationStandardReleaseSchema,
+});
+export const CandidateReviewResponseSchema = z.object({
+  candidate: CandidateSkillSchema,
+  version: CandidateSkillVersionSchema,
+  review: CandidateReviewSchema,
+});
+
+export const DeviceStandardTargetSchema = z.object({
+  standardId: z.uuid(),
+  name: z.string(),
+  releaseId: z.uuid(),
+  version: z.string(),
+  artifactHash: CandidateSubmissionRequestSchema.shape.artifactHash,
+  artifactUrl: z.string().min(1),
+  collisionPolicy: z.literal("organization_wins_preserve_personal"),
+});
+export const DeviceStandardManifestSchema = z.object({
+  schemaVersion: z.literal("1"),
+  sequence: z.number().int().nonnegative(),
+  pollAfterSeconds: z.number().int().min(5).max(300),
+  generatedAt: z.iso.datetime(),
+  state: z.enum(["active", "paused"]),
+  mandatory: z.literal(true),
+  target: DeviceStandardTargetSchema.nullable(),
+  previousReleaseId: z.uuid().nullable(),
+});
+export const DeviceStandardArtifactSchema = z.object({
+  standardId: z.uuid(),
+  releaseId: z.uuid(),
+  name: z.string(),
+  version: z.string(),
+  artifactHash: CandidateSubmissionRequestSchema.shape.artifactHash,
+  package: CandidatePackageSchema,
+});
+export const DeviceStandardReleaseParamsSchema = z.object({ releaseId: z.uuid() });
+export const DeviceStandardInstallationStateSchema = z.enum([
+  "idle",
+  "deferred_active_session",
+  "installed",
+  "download_failed",
+  "verification_failed",
+  "staging_failed",
+  "switch_failed",
+  "rolled_back",
+]);
+export const DeviceStandardInstallationFailureSchema = z.object({
+  stage: z.enum(["download", "verification", "staging", "switch"]),
+  code: z.string().trim().min(1).max(120),
+  message: z.string().trim().min(1).max(2_000),
+});
+export const DeviceStandardInstallationReportRequestSchema = z.object({
+  releaseId: z.uuid().nullable(),
+  installedReleaseId: z.uuid().nullable(),
+  state: DeviceStandardInstallationStateSchema,
+  observedAt: z.iso.datetime(),
+  activeSessionIds: z.array(z.string().trim().min(1).max(240)).max(100).default([]),
+  failure: DeviceStandardInstallationFailureSchema.nullable().optional(),
+});
+export const DeviceStandardInstallationSchema =
+  DeviceStandardInstallationReportRequestSchema.extend({
+    deviceId: z.uuid(),
+    serverReceivedAt: z.iso.datetime(),
+  });
+export const DeviceStandardInstallationsResponseSchema = z.object({
+  items: z.array(DeviceStandardInstallationSchema),
+});
+
+export const OrganizationStandardParamsSchema = z.object({ standardId: z.uuid() });
+export const OrganizationStandardRollbackRequestSchema = z.object({
+  releaseId: z.uuid(),
+});
+export const OrganizationStandardDistributionSchema = z.object({
+  standardId: z.uuid(),
+  name: z.string(),
+  state: z.enum(["active", "paused"]),
+  sequence: z.number().int().nonnegative(),
+  target: OrganizationStandardReleaseSchema.nullable(),
+  previousReleaseId: z.uuid().nullable(),
+  releases: z.array(OrganizationStandardReleaseSchema),
+  installations: z.array(DeviceStandardInstallationSchema),
+});
+export const OrganizationStandardsResponseSchema = z.object({
+  items: z.array(OrganizationStandardDistributionSchema),
 });
 
 export const ComparisonResponseSchema = z.object({
@@ -938,6 +1068,31 @@ export type CandidateSubmissionRequest = z.infer<
 >;
 export type CandidateSubmissionResponse = z.infer<
   typeof CandidateSubmissionResponseSchema
+>;
+export type CandidateReviewEditRequest = z.infer<
+  typeof CandidateReviewEditRequestSchema
+>;
+export type CandidateReview = z.infer<typeof CandidateReviewSchema>;
+export type OrganizationStandardRelease = z.infer<
+  typeof OrganizationStandardReleaseSchema
+>;
+export type DeviceStandardManifest = z.infer<
+  typeof DeviceStandardManifestSchema
+>;
+export type DeviceStandardArtifact = z.infer<
+  typeof DeviceStandardArtifactSchema
+>;
+export type DeviceStandardInstallationState = z.infer<
+  typeof DeviceStandardInstallationStateSchema
+>;
+export type DeviceStandardInstallationReportRequest = z.infer<
+  typeof DeviceStandardInstallationReportRequestSchema
+>;
+export type DeviceStandardInstallation = z.infer<
+  typeof DeviceStandardInstallationSchema
+>;
+export type OrganizationStandardDistribution = z.infer<
+  typeof OrganizationStandardDistributionSchema
 >;
 export type ComparisonResponse = z.infer<typeof ComparisonResponseSchema>;
 export type OrganizationActivityQuery = z.infer<
