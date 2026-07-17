@@ -80,6 +80,29 @@ export const browserSessions = pgTable(
   (table) => [uniqueIndex("browser_sessions_token_digest_unique").on(table.tokenDigest)],
 );
 
+export const analysisCredentials = pgTable(
+  "analysis_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    tokenDigest: varchar("token_digest", { length: 128 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("analysis_credentials_token_digest_unique").on(table.tokenDigest),
+    index("analysis_credentials_member_idx").on(table.memberId),
+    index("analysis_credentials_organization_idx").on(table.organizationId),
+  ],
+);
+
 export const inviteCredentials = pgTable(
   "invite_credentials",
   {
@@ -324,6 +347,61 @@ export const examplePackImports = pgTable(
       table.organizationId,
       table.version,
     ),
+  ],
+);
+
+export const candidateSkills = pgTable(
+  "candidate_skills",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("candidate_skills_org_name_unique").on(
+      table.organizationId,
+      table.name,
+    ),
+    index("candidate_skills_organization_idx").on(table.organizationId),
+  ],
+);
+
+export const candidateSkillVersions = pgTable(
+  "candidate_skill_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidateSkills.id, { onDelete: "restrict" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    version: text("version").notNull(),
+    artifactHash: varchar("artifact_hash", { length: 71 }).notNull(),
+    artifact: jsonb("artifact").notNull(),
+    reviewerContext: text("reviewer_context").notNull(),
+    uncertainty: jsonb("uncertainty").notNull(),
+    claims: jsonb("claims").notNull(),
+    citations: jsonb("citations").notNull(),
+    submittedByMemberId: uuid("submitted_by_member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    analysisCredentialId: uuid("analysis_credential_id")
+      .notNull()
+      .references(() => analysisCredentials.id, { onDelete: "restrict" }),
+    submittedAt: timestamp("submitted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("candidate_skill_versions_candidate_version_unique").on(
+      table.candidateId,
+      table.version,
+    ),
+    index("candidate_skill_versions_organization_idx").on(table.organizationId),
   ],
 );
 

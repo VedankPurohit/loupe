@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import {
+  analysisCredentials,
   bootstrapCredentials,
   browserSessions,
   capturedRecords,
@@ -19,6 +20,9 @@ import {
 } from "@workspace/database";
 import { SourceEventSchema } from "@workspace/contracts";
 import type {
+  AnalysisCredential,
+  AnalysisCredentialCreateRequest,
+  AnalysisCredentialCreateResponse,
   AuthenticatedSessionResponse,
   BootstrapRedeemRequest,
   CaptureRecord,
@@ -41,6 +45,10 @@ const deviceEnrollmentGrantLifetimeMs = 10 * 60 * 1_000;
 const injectedBootstrapCodePattern = /^bootstrap_[A-Za-z0-9_-]{43,}$/;
 const enrollmentGrantPattern = /^enroll_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/;
 const inviteCodePattern = /^invite_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/;
+const analysisScopes = [
+  "organization:evidence:read",
+  "candidate:submit",
+] as const;
 
 export class IdentityError extends Error {
   constructor(
@@ -91,6 +99,29 @@ function toEnrolledDevice(device: {
     },
   };
 }
+
+function toAnalysisCredential(credential: {
+  id: string;
+  memberId: string;
+  name: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}): AnalysisCredential {
+  return {
+    id: credential.id,
+    memberId: credential.memberId,
+    name: credential.name,
+    scopes: [...analysisScopes],
+    createdAt: credential.createdAt.toISOString(),
+    lastUsedAt: credential.lastUsedAt?.toISOString() ?? null,
+    revokedAt: credential.revokedAt?.toISOString() ?? null,
+  };
+}
+
+export type AnalysisAuthentication = AuthenticatedSessionResponse & {
+  analysisCredential: AnalysisCredential;
+};
 
 export class IdentityStore {
   private readonly client;
@@ -297,6 +328,110 @@ export class IdentityStore {
         displayName: session.memberDisplayName,
         role: session.memberRole,
       },
+    };
+  }
+
+  async createAnalysisCredential(
+    memberId: string,
+    input: AnalysisCredentialCreateRequest,
+  ): Promise<AnalysisCredentialCreateResponse | undefined> {
+    const [member] = await this.database
+      .select({ organizationId: organizationMembers.organizationId })
+      .from(organizationMembers)
+      .where(eq(organizationMembers.id, memberId))
+      .limit(1);
+    if (!member) return undefined;
+    const credential = `analysis_${randomBytes(32).toString("base64url")}`;
+    const [created] = await this.database
+      .insert(analysisCredentials)
+      .values({
+        organizationId: member.organizationId,
+        memberId,
+        name: input.name,
+        tokenDigest: digestSessionToken(credential),
+      })
+      .returning();
+    return {
+      credential,
+      analysisCredential: toAnalysisCredential(created!),
+    };
+  }
+
+  async listAnalysisCredentials(memberId: string): Promise<AnalysisCredential[]> {
+    const rows = await this.database
+      .select()
+      .from(analysisCredentials)
+      .where(eq(analysisCredentials.memberId, memberId))
+      .orderBy(asc(analysisCredentials.createdAt));
+    return rows.map(toAnalysisCredential);
+  }
+
+  async revokeAnalysisCredential(
+    memberId: string,
+    credentialId: string,
+  ): Promise<boolean> {
+    const [revoked] = await this.database
+      .update(analysisCredentials)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(analysisCredentials.id, credentialId),
+          eq(analysisCredentials.memberId, memberId),
+          isNull(analysisCredentials.revokedAt),
+        ),
+      )
+      .returning({ id: analysisCredentials.id });
+    return revoked !== undefined;
+  }
+
+  async authenticateAnalysis(
+    token: string,
+  ): Promise<AnalysisAuthentication | undefined> {
+    const [authentication] = await this.database
+      .select({
+        organizationId: organizations.id,
+        organizationName: organizations.name,
+        memberId: organizationMembers.id,
+        memberDisplayName: organizationMembers.displayName,
+        memberRole: organizationMembers.role,
+        credential: analysisCredentials,
+      })
+      .from(analysisCredentials)
+      .innerJoin(
+        organizationMembers,
+        eq(analysisCredentials.memberId, organizationMembers.id),
+      )
+      .innerJoin(
+        organizations,
+        eq(analysisCredentials.organizationId, organizations.id),
+      )
+      .where(
+        and(
+          eq(analysisCredentials.tokenDigest, digestSessionToken(token)),
+          isNull(analysisCredentials.revokedAt),
+        ),
+      )
+      .limit(1);
+    if (!authentication) return undefined;
+    const now = new Date();
+    await this.database
+      .update(analysisCredentials)
+      .set({ lastUsedAt: now })
+      .where(eq(analysisCredentials.id, authentication.credential.id));
+    return {
+      organization: {
+        id: authentication.organizationId,
+        name: authentication.organizationName,
+      },
+      member: {
+        id: authentication.memberId,
+        displayName: authentication.memberDisplayName,
+        role: authentication.memberRole,
+      },
+      analysisCredential: toAnalysisCredential({
+        ...authentication.credential,
+        lastUsedAt: now,
+      }),
     };
   }
 

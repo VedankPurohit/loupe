@@ -64,6 +64,20 @@
       "when": 1784291377160,
       "tag": "0008_wakeful_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784293752825,
+      "tag": "0009_public_wiccan",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784294372463,
+      "tag": "0010_wealthy_thunderbird",
+      "breakpoints": true
     }
   ]
 }

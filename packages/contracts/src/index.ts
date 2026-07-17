@@ -19,6 +19,19 @@ export const deviceCredentialOpenApiSecurityScheme = {
 export const deviceCredentialOpenApiSecurity = [
   { [deviceCredentialSecuritySchemeName]: [] },
 ];
+export const analysisCredentialSecuritySchemeName = "analysisCredential";
+export const analysisCredentialOpenApiSecurityScheme = {
+  type: "http",
+  scheme: "bearer",
+  bearerFormat: "Analysis credential",
+} as const;
+export const analysisCredentialOpenApiSecurity = [
+  { [analysisCredentialSecuritySchemeName]: [] },
+];
+export const browserOrAnalysisOpenApiSecurity = [
+  ...browserSessionOpenApiSecurity,
+  ...analysisCredentialOpenApiSecurity,
+];
 
 export const ApiErrorSchema = z.object({
   error: z.object({
@@ -42,6 +55,31 @@ export const OrganizationMemberSchema = z.object({
   displayName: z.string(),
   role: z.enum(["member", "administrator"]),
 });
+
+export const AnalysisCredentialScopeSchema = z.enum([
+  "organization:evidence:read",
+  "candidate:submit",
+]);
+export const AnalysisCredentialSchema = z.object({
+  id: z.uuid(),
+  memberId: z.uuid(),
+  name: z.string().min(1),
+  scopes: z.array(AnalysisCredentialScopeSchema).length(2),
+  createdAt: z.iso.datetime(),
+  lastUsedAt: z.iso.datetime().nullable(),
+  revokedAt: z.iso.datetime().nullable(),
+});
+export const AnalysisCredentialCreateRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+export const AnalysisCredentialCreateResponseSchema = z.object({
+  credential: z.string().regex(/^analysis_[A-Za-z0-9_-]{43}$/),
+  analysisCredential: AnalysisCredentialSchema,
+});
+export const AnalysisCredentialsResponseSchema = z.object({
+  analysisCredentials: z.array(AnalysisCredentialSchema),
+});
+export const AnalysisCredentialIdParamsSchema = z.object({ id: z.uuid() });
 
 export const BootstrapStatusResponseSchema = z.object({
   required: z.boolean(),
@@ -546,6 +584,74 @@ export const EvidenceCitationSchema = z.object({
   }),
 });
 
+export const CandidatePackageFileSchema = z.object({
+  path: z.string().trim().min(1).max(240),
+  content: z.string().max(1_000_000),
+});
+export const CandidatePackageSchema = z.object({
+  files: z.array(CandidatePackageFileSchema).max(100),
+});
+export const CandidateClaimSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  statement: z.string().trim().min(1).max(2_000),
+  classification: z
+    .enum(["repeated_pattern", "single_case_hypothesis", "descriptive"])
+    .default("descriptive"),
+  citationIds: z.array(z.string().trim().min(1).max(120)).max(100),
+});
+export const CandidateCitationInputSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  activityId: z.uuid(),
+});
+export const CandidateSubmissionRequestSchema = z.object({
+  name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(63),
+  version: z
+    .string()
+    .regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+    .max(80),
+  reviewerContext: z.string().trim().min(1).max(10_000),
+  uncertainty: z.object({
+    level: z.enum(["low", "medium", "high"]),
+    statement: z.string().trim().min(1).max(4_000),
+  }),
+  claims: z.array(CandidateClaimSchema).min(1).max(100),
+  citations: z.array(CandidateCitationInputSchema).max(500),
+  package: CandidatePackageSchema,
+  artifactHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+});
+export const CandidateSkillSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  status: z.literal("pending_review"),
+  createdAt: z.iso.datetime(),
+  deepLink: z.string().min(1),
+});
+export const CandidateSkillVersionSchema = z.object({
+  id: z.uuid(),
+  version: z.string(),
+  immutable: z.literal(true),
+  artifactHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  package: CandidatePackageSchema,
+  reviewerContext: z.string(),
+  uncertainty: CandidateSubmissionRequestSchema.shape.uncertainty,
+  claims: z.array(CandidateClaimSchema),
+  citations: z.array(EvidenceCitationSchema),
+  submittedAt: z.iso.datetime(),
+  submittedBy: z.object({
+    memberId: z.uuid(),
+    analysisCredentialId: z.uuid(),
+  }),
+});
+export const CandidateSubmissionResponseSchema = z.object({
+  candidate: CandidateSkillSchema,
+  version: CandidateSkillVersionSchema,
+});
+export const CandidateHistoryResponseSchema = z.object({
+  items: z.array(CandidateSubmissionResponseSchema),
+});
+
 export const ComparisonResponseSchema = z.object({
   population: z.object({
     selected: z.array(ComparisonSelectionSchema),
@@ -761,6 +867,16 @@ export type BootstrapRedeemRequest = z.infer<typeof BootstrapRedeemRequestSchema
 export type AuthenticatedSessionResponse = z.infer<
   typeof AuthenticatedSessionResponseSchema
 >;
+export type AnalysisCredentialScope = z.infer<
+  typeof AnalysisCredentialScopeSchema
+>;
+export type AnalysisCredential = z.infer<typeof AnalysisCredentialSchema>;
+export type AnalysisCredentialCreateRequest = z.infer<
+  typeof AnalysisCredentialCreateRequestSchema
+>;
+export type AnalysisCredentialCreateResponse = z.infer<
+  typeof AnalysisCredentialCreateResponseSchema
+>;
 export type InviteCodeRequest = z.infer<typeof InviteCodeRequestSchema>;
 export type InviteCodeResponse = z.infer<typeof InviteCodeResponseSchema>;
 export type InviteCodeRedeemRequest = z.infer<
@@ -815,6 +931,14 @@ export type ComparisonFilters = z.infer<typeof ComparisonFiltersSchema>;
 export type ComparisonClaim = z.infer<typeof ComparisonClaimSchema>;
 export type ComparisonRequest = z.infer<typeof ComparisonRequestSchema>;
 export type EvidenceCitation = z.infer<typeof EvidenceCitationSchema>;
+export type CandidatePackage = z.infer<typeof CandidatePackageSchema>;
+export type CandidateClaim = z.infer<typeof CandidateClaimSchema>;
+export type CandidateSubmissionRequest = z.infer<
+  typeof CandidateSubmissionRequestSchema
+>;
+export type CandidateSubmissionResponse = z.infer<
+  typeof CandidateSubmissionResponseSchema
+>;
 export type ComparisonResponse = z.infer<typeof ComparisonResponseSchema>;
 export type OrganizationActivityQuery = z.infer<
   typeof OrganizationActivityQuerySchema

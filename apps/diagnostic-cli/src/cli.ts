@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+
 import {
+  AnalysisCredentialCreateResponseSchema,
+  AnalysisCredentialsResponseSchema,
   ApiErrorSchema,
+  CandidateSubmissionRequestSchema,
+  CandidateSubmissionResponseSchema,
+  CitationActivityTargetResponseSchema,
+  CitationTurnTargetResponseSchema,
   ComparisonResponseSchema,
   ExecutionSessionDetailResponseSchema,
   ExamplePackImportResponseSchema,
@@ -14,19 +23,32 @@ import {
 } from "@workspace/contracts";
 
 const usage = `Usage:
-  loupe-diagnostic inspect <session-id> --server-url <url> --browser-session <token>
-  loupe-diagnostic search [--query <text>] [--member <id>] [--repository <text>] [--include-seeded] [--page <n>] [--page-size <n>] [--json] --server-url <url> --browser-session <token>
-  loupe-diagnostic compare <session-id[:turn-id]>... --claim <statement> [--kind pattern|outcome|causal|productivity] [--include-seeded] [--json] --server-url <url> --browser-session <token>
+  loupe-diagnostic inspect <session-id> [--json] --server-url <url> --analysis-credential <token>
+  loupe-diagnostic search [--query <text>] [--member <id>] [--repository <text>] [--include-seeded] [--page <n>] [--page-size <n>] [--json] --server-url <url> --analysis-credential <token>
+  loupe-diagnostic compare <session-id[:turn-id]>... --claim <statement> [--kind pattern|outcome|causal|productivity] [--include-seeded] [--json] --server-url <url> --analysis-credential <token>
+  loupe-diagnostic cite <session-id:turn-id:activity-id> [--json] --server-url <url> --analysis-credential <token>
+  loupe-diagnostic candidate submit <manifest.json> [--json] --server-url <url> --analysis-credential <token>
+  loupe-diagnostic watch [--max-events <n>] [--json] --server-url <url> --analysis-credential <token>
+  loupe-diagnostic credential create --name <label> [--json] --server-url <url> --browser-session <token>
+  loupe-diagnostic credential list [--json] --server-url <url> --browser-session <token>
+  loupe-diagnostic credential revoke <credential-id> --server-url <url> --browser-session <token>
   loupe-diagnostic examples import starter-v1 --server-url <url> --browser-session <token>
 
 Environment alternatives:
   LOUPE_SERVER_URL       Server base URL (default: http://127.0.0.1:3000)
+  LOUPE_ANALYSIS_CREDENTIAL  Revocable Analysis credential
   LOUPE_BROWSER_SESSION  Value of the browser_session cookie`;
+
+interface Authentication {
+  analysisCredential?: string;
+  browserSession?: string;
+}
 
 interface InspectOptions {
   sessionId: string;
   serverUrl: URL;
-  browserSession: string;
+  authentication: Authentication;
+  structured: boolean;
 }
 
 function readValue(args: string[], index: number, flag: string): string {
@@ -39,6 +61,15 @@ function readValue(args: string[], index: number, flag: string): string {
 
 class UsageError extends Error {}
 
+class ApiRequestError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 function parseInspectOptions(args: string[]): InspectOptions {
   if (args[0] !== "inspect" || !args[1] || args[1].startsWith("--")) {
     throw new UsageError("Expected the inspect command and a Session id.");
@@ -47,6 +78,8 @@ function parseInspectOptions(args: string[]): InspectOptions {
   const sessionId = args[1];
   let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
   let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let structured = false;
 
   for (let index = 2; index < args.length; index += 1) {
     const flag = args[index];
@@ -56,14 +89,19 @@ function parseInspectOptions(args: string[]): InspectOptions {
     } else if (flag === "--browser-session") {
       browserSession = readValue(args, index, flag);
       index += 1;
+    } else if (flag === "--analysis-credential") {
+      analysisCredential = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--json") {
+      structured = true;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
     }
   }
 
-  if (!browserSession) {
+  if (!browserSession && !analysisCredential) {
     throw new UsageError(
-      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
     );
   }
 
@@ -77,7 +115,12 @@ function parseInspectOptions(args: string[]): InspectOptions {
     throw new UsageError("The server URL must use http or https.");
   }
 
-  return { sessionId, serverUrl: parsedServerUrl, browserSession };
+  return {
+    sessionId,
+    serverUrl: parsedServerUrl,
+    authentication: { analysisCredential, browserSession },
+    structured,
+  };
 }
 
 function evidenceStrength(evidence: Turn["evidence"]): string {
@@ -154,14 +197,19 @@ async function inspect(options: InspectOptions): Promise<void> {
   const response = await fetch(endpoint, {
     headers: {
       accept: "application/json",
-      cookie: `${browserSessionCookieName}=${options.browserSession}`,
+      ...(options.authentication.analysisCredential
+        ? { authorization: `Bearer ${options.authentication.analysisCredential}` }
+        : {
+            cookie: `${browserSessionCookieName}=${options.authentication.browserSession}`,
+          }),
     },
   });
   const body: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
     const apiError = ApiErrorSchema.safeParse(body);
     if (apiError.success) {
-      throw new Error(
+      throw new ApiRequestError(
+        apiError.data.error.code,
         `${apiError.data.error.code}: ${apiError.data.error.message}`,
       );
     }
@@ -172,19 +220,25 @@ async function inspect(options: InspectOptions): Promise<void> {
   if (!parsed.success) {
     throw new Error("INVALID_RESPONSE: Server returned an invalid Session detail.");
   }
-  process.stdout.write(formatDetail(parsed.data));
+  process.stdout.write(
+    options.structured
+      ? `${JSON.stringify(parsed.data, null, 2)}\n`
+      : formatDetail(parsed.data),
+  );
 }
 
 async function authenticatedJson(
   endpoint: URL,
-  browserSession: string,
+  authentication: Authentication,
   init?: RequestInit,
 ): Promise<unknown> {
   const response = await fetch(endpoint, {
     ...init,
     headers: {
       accept: "application/json",
-      cookie: `${browserSessionCookieName}=${browserSession}`,
+      ...(authentication.analysisCredential
+        ? { authorization: `Bearer ${authentication.analysisCredential}` }
+        : { cookie: `${browserSessionCookieName}=${authentication.browserSession}` }),
       ...(init?.headers ?? {}),
     },
   });
@@ -192,7 +246,10 @@ async function authenticatedJson(
   if (!response.ok) {
     const apiError = ApiErrorSchema.safeParse(body);
     if (apiError.success) {
-      throw new Error(`${apiError.data.error.code}: ${apiError.data.error.message}`);
+      throw new ApiRequestError(
+        apiError.data.error.code,
+        apiError.data.error.message,
+      );
     }
     throw new Error(`HTTP_${response.status}: Request failed.`);
   }
@@ -212,6 +269,7 @@ function parseServerUrl(value: string): URL {
 async function search(args: string[]): Promise<void> {
   let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
   let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
   let structured = false;
   const query = new URLSearchParams();
   const valueFlags: Record<string, string> = {
@@ -243,19 +301,22 @@ async function search(args: string[]): Promise<void> {
     } else if (flag === "--browser-session") {
       browserSession = readValue(args, index, flag);
       index += 1;
+    } else if (flag === "--analysis-credential") {
+      analysisCredential = readValue(args, index, flag);
+      index += 1;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
     }
   }
-  if (!browserSession) {
+  if (!browserSession && !analysisCredential) {
     throw new UsageError(
-      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
     );
   }
   const endpoint = new URL("/api/v1/organization/activity", parseServerUrl(serverUrl));
   endpoint.search = query.toString();
   const parsed = OrganizationActivityResponseSchema.safeParse(
-    await authenticatedJson(endpoint, browserSession),
+    await authenticatedJson(endpoint, { analysisCredential, browserSession }),
   );
   if (!parsed.success) {
     throw new Error("INVALID_RESPONSE: Server returned invalid Organization activity.");
@@ -310,6 +371,7 @@ async function compare(args: string[]): Promise<void> {
   });
   let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
   let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
   let includeSeeded = false;
   let structured = false;
   let statement: string | undefined;
@@ -349,19 +411,22 @@ async function compare(args: string[]): Promise<void> {
     } else if (flag === "--browser-session") {
       browserSession = readValue(args, index, flag);
       index += 1;
+    } else if (flag === "--analysis-credential") {
+      analysisCredential = readValue(args, index, flag);
+      index += 1;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
     }
   }
   if (!statement) throw new UsageError("The compare command requires --claim.");
-  if (!browserSession) {
+  if (!browserSession && !analysisCredential) {
     throw new UsageError(
-      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
     );
   }
   const endpoint = new URL("/api/v1/comparisons", parseServerUrl(serverUrl));
   const parsed = ComparisonResponseSchema.safeParse(
-    await authenticatedJson(endpoint, browserSession, {
+    await authenticatedJson(endpoint, { analysisCredential, browserSession }, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -399,6 +464,376 @@ async function compare(args: string[]): Promise<void> {
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
+async function cite(args: string[]): Promise<void> {
+  const selection = args[1];
+  if (!selection || selection.startsWith("--")) {
+    throw new UsageError("The cite command requires session-id:turn-id:activity-id.");
+  }
+  const parts = selection.split(":");
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+    throw new UsageError(`Invalid citation selection: ${selection}`);
+  }
+  const [sessionId, turnId, activityId] = parts as [string, string, string];
+  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let structured = false;
+  for (let index = 2; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--browser-session") {
+      browserSession = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--analysis-credential") {
+      analysisCredential = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--json") {
+      structured = true;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  if (!browserSession && !analysisCredential) {
+    throw new UsageError(
+      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+    );
+  }
+  const baseUrl = parseServerUrl(serverUrl);
+  const authentication = { analysisCredential, browserSession };
+  const encodedSession = encodeURIComponent(sessionId);
+  const encodedTurn = encodeURIComponent(turnId);
+  const encodedActivity = encodeURIComponent(activityId);
+  const [turnResult, activityResult] = await Promise.all([
+    authenticatedJson(
+      new URL(`/api/v1/sessions/${encodedSession}/turns/${encodedTurn}`, baseUrl),
+      authentication,
+    ),
+    authenticatedJson(
+      new URL(
+        `/api/v1/sessions/${encodedSession}/activity/${encodedActivity}`,
+        baseUrl,
+      ),
+      authentication,
+    ),
+  ]);
+  const turn = CitationTurnTargetResponseSchema.safeParse(turnResult);
+  const activity = CitationActivityTargetResponseSchema.safeParse(activityResult);
+  if (!turn.success || !activity.success || activity.data.turnId !== turnId) {
+    throw new Error("INVALID_RESPONSE: Server returned an invalid Evidence citation.");
+  }
+  const result = {
+    citation: {
+      sessionId,
+      turnId,
+      activityId,
+      synthetic: turn.data.session.synthetic.kind,
+      fidelity: activity.data.activity.evidence,
+      links: {
+        session: new URL(`/api/v1/sessions/${encodedSession}`, baseUrl).toString(),
+        turn: new URL(
+          `/api/v1/sessions/${encodedSession}/turns/${encodedTurn}`,
+          baseUrl,
+        ).toString(),
+        activity: new URL(
+          `/api/v1/sessions/${encodedSession}/activity/${encodedActivity}`,
+          baseUrl,
+        ).toString(),
+        browser: new URL(
+          `/?session=${encodedSession}&turn=${encodedTurn}&activity=${encodedActivity}`,
+          baseUrl,
+        ).toString(),
+      },
+    },
+    turn: turn.data.turn,
+    activity: activity.data.activity,
+  };
+  if (structured) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    [
+      `Citation: ${sessionId}/${turnId}/${activityId}`,
+      `Synthetic: ${result.citation.synthetic}`,
+      `Fidelity: ${evidenceStrength(result.citation.fidelity)}`,
+      `Browser: ${result.citation.links.browser}`,
+    ].join("\n") + "\n",
+  );
+}
+
+async function submitCandidate(args: string[]): Promise<void> {
+  if (args[1] !== "submit" || !args[2] || args[2]!.startsWith("--")) {
+    throw new UsageError("Expected candidate submit <manifest.json>.");
+  }
+  const manifestPath = args[2]!;
+  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
+  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let structured = false;
+  for (let index = 3; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--analysis-credential") {
+      analysisCredential = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--json") {
+      structured = true;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  if (!analysisCredential) {
+    throw new UsageError(
+      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+    );
+  }
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch {
+      throw new UsageError(`Candidate manifest is not readable JSON: ${manifestPath}`);
+  }
+  if (
+    typeof manifest === "object" &&
+    manifest !== null &&
+    !("artifactHash" in manifest) &&
+    "package" in manifest &&
+    typeof manifest.package === "object" &&
+    manifest.package !== null &&
+    "files" in manifest.package &&
+    Array.isArray(manifest.package.files)
+  ) {
+    const files = [...manifest.package.files].sort((left, right) => {
+      const leftPath =
+        typeof left === "object" && left !== null && "path" in left
+          ? String(left.path)
+          : "";
+      const rightPath =
+        typeof right === "object" && right !== null && "path" in right
+          ? String(right.path)
+          : "";
+      return leftPath.localeCompare(rightPath);
+    });
+    manifest = {
+      ...manifest,
+      package: { files },
+      artifactHash: `sha256:${createHash("sha256")
+        .update(JSON.stringify({ files }))
+        .digest("hex")}`,
+    };
+  }
+  const request = CandidateSubmissionRequestSchema.safeParse(manifest);
+  if (!request.success) {
+    throw new UsageError(
+      "Candidate manifest is incomplete or does not match the submission contract.",
+    );
+  }
+  const parsed = CandidateSubmissionResponseSchema.safeParse(
+    await authenticatedJson(
+      new URL("/api/v1/candidates", parseServerUrl(serverUrl)),
+      { analysisCredential },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(request.data),
+      },
+    ),
+  );
+  if (!parsed.success) {
+    throw new Error("INVALID_RESPONSE: Server returned invalid Candidate data.");
+  }
+  if (structured) {
+    process.stdout.write(`${JSON.stringify(parsed.data, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    [
+      `Candidate: ${parsed.data.candidate.name}`,
+      `Version: ${parsed.data.version.version} (immutable)`,
+      `Artifact hash: ${parsed.data.version.artifactHash}`,
+      `Status: ${parsed.data.candidate.status}`,
+      `Review: ${new URL(parsed.data.candidate.deepLink, serverUrl).toString()}`,
+    ].join("\n") + "\n",
+  );
+}
+
+async function watch(args: string[]): Promise<void> {
+  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
+  let analysisCredential = process.env.LOUPE_ANALYSIS_CREDENTIAL;
+  let structured = false;
+  let maxEvents = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--analysis-credential") {
+      analysisCredential = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--max-events") {
+      maxEvents = Number(readValue(args, index, flag));
+      if (!Number.isInteger(maxEvents) || maxEvents < 1) {
+        throw new UsageError("--max-events must be a positive integer.");
+      }
+      index += 1;
+    } else if (flag === "--json") {
+      structured = true;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  if (!analysisCredential) {
+    throw new UsageError(
+      "An Analysis credential is required via --analysis-credential or LOUPE_ANALYSIS_CREDENTIAL.",
+    );
+  }
+  const response = await fetch(
+    new URL("/api/v1/live", parseServerUrl(serverUrl)),
+    {
+      headers: {
+        accept: "text/event-stream",
+        authorization: `Bearer ${analysisCredential}`,
+      },
+    },
+  );
+  if (!response.ok || !response.body) {
+    const body: unknown = await response.json().catch(() => undefined);
+    const apiError = ApiErrorSchema.safeParse(body);
+    if (apiError.success) {
+      throw new ApiRequestError(
+        apiError.data.error.code,
+        apiError.data.error.message,
+      );
+    }
+    throw new Error(`HTTP_${response.status}: Watch failed.`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let seen = 0;
+  while (seen < maxEvents) {
+    const result = await reader.read();
+    if (result.done) break;
+    buffer += decoder.decode(result.value, { stream: true });
+    let separator = buffer.indexOf("\n\n");
+    while (separator >= 0 && seen < maxEvents) {
+      const block = buffer.slice(0, separator);
+      buffer = buffer.slice(separator + 2);
+      const data = block
+        .split("\n")
+        .find((line) => line.startsWith("data: "))
+        ?.slice("data: ".length);
+      if (data) {
+        const event = JSON.parse(data) as {
+          sequence: number;
+          type: string;
+          sessionId: string;
+          occurredAt: string;
+        };
+        seen += 1;
+        process.stdout.write(
+          structured
+            ? `${JSON.stringify(event)}\n`
+            : `${event.type} #${event.sequence}: ${event.sessionId} at ${event.occurredAt}\n`,
+        );
+      }
+      separator = buffer.indexOf("\n\n");
+    }
+  }
+  await reader.cancel();
+}
+
+async function manageCredential(args: string[]): Promise<void> {
+  const action = args[1];
+  if (!action || !["create", "list", "revoke"].includes(action)) {
+    throw new UsageError("Expected credential create, list, or revoke.");
+  }
+  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let structured = false;
+  let name: string | undefined;
+  const credentialId = action === "revoke" ? args[2] : undefined;
+  let index = action === "revoke" ? 3 : 2;
+  for (; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--browser-session") {
+      browserSession = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--name") {
+      name = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--json") {
+      structured = true;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  if (!browserSession) {
+    throw new UsageError(
+      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+    );
+  }
+  const endpoint = new URL("/api/v1/analysis-credentials", parseServerUrl(serverUrl));
+  if (action === "create") {
+    if (!name) throw new UsageError("credential create requires --name.");
+    const parsed = AnalysisCredentialCreateResponseSchema.safeParse(
+      await authenticatedJson(
+        endpoint,
+        { browserSession },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name }),
+        },
+      ),
+    );
+    if (!parsed.success) throw new Error("INVALID_RESPONSE: Invalid credential data.");
+    process.stdout.write(
+      structured
+        ? `${JSON.stringify(parsed.data, null, 2)}\n`
+        : `Analysis credential ${parsed.data.analysisCredential.id}\n${parsed.data.credential}\n`,
+    );
+    return;
+  }
+  if (action === "list") {
+    const parsed = AnalysisCredentialsResponseSchema.safeParse(
+      await authenticatedJson(endpoint, { browserSession }),
+    );
+    if (!parsed.success) throw new Error("INVALID_RESPONSE: Invalid credential data.");
+    process.stdout.write(
+      structured
+        ? `${JSON.stringify(parsed.data, null, 2)}\n`
+        : parsed.data.analysisCredentials
+            .map(
+              (credential) =>
+                `${credential.id}  ${credential.name}  ${credential.revokedAt ? "revoked" : "active"}`,
+            )
+            .join("\n") + "\n",
+    );
+    return;
+  }
+  if (!credentialId) throw new UsageError("credential revoke requires an id.");
+  await authenticatedJson(
+    new URL(
+      `/api/v1/analysis-credentials/${encodeURIComponent(credentialId)}/revoke`,
+      parseServerUrl(serverUrl),
+    ),
+    { browserSession },
+    { method: "POST" },
+  );
+  process.stdout.write(
+    structured
+      ? `${JSON.stringify({ id: credentialId, revoked: true })}\n`
+      : `Revoked Analysis credential ${credentialId}.\n`,
+  );
+}
+
 async function importExamples(args: string[]): Promise<void> {
   if (args[1] !== "import" || args[2] !== "starter-v1") {
     throw new UsageError("Expected examples import starter-v1.");
@@ -427,7 +862,7 @@ async function importExamples(args: string[]): Promise<void> {
     parseServerUrl(serverUrl),
   );
   const parsed = ExamplePackImportResponseSchema.safeParse(
-    await authenticatedJson(endpoint, browserSession, { method: "POST" }),
+    await authenticatedJson(endpoint, { browserSession }, { method: "POST" }),
   );
   if (!parsed.success) {
     throw new Error("INVALID_RESPONSE: Server returned invalid Example-pack data.");
@@ -448,6 +883,14 @@ async function main(): Promise<void> {
       await search(args);
     } else if (args[0] === "compare") {
       await compare(args);
+    } else if (args[0] === "cite") {
+      await cite(args);
+    } else if (args[0] === "candidate") {
+      await submitCandidate(args);
+    } else if (args[0] === "watch") {
+      await watch(args);
+    } else if (args[0] === "credential") {
+      await manageCredential(args);
     } else if (args[0] === "examples") {
       await importExamples(args);
     } else {
@@ -460,8 +903,14 @@ async function main(): Promise<void> {
       process.exitCode = 2;
       return;
     }
-    const message = error instanceof Error ? error.message : "Unknown CLI error.";
-    process.stderr.write(`${message}\n`);
+    if (args.includes("--json") && error instanceof ApiRequestError) {
+      process.stderr.write(
+        `${JSON.stringify({ error: { code: error.code, message: error.message } })}\n`,
+      );
+    } else {
+      const message = error instanceof Error ? error.message : "Unknown CLI error.";
+      process.stderr.write(`${message}\n`);
+    }
     process.exitCode = 1;
   }
 }

@@ -65,6 +65,8 @@ The pnpm workspace keeps public contracts and persistence boundaries explicit:
 | `packages/contracts` | Shared Zod request/response schemas used for runtime validation, TypeScript types, and OpenAPI generation |
 | `packages/database` | Drizzle PostgreSQL schema, migrations, and migration runner |
 | `packages/relay` | Local SQLite capture queue and ordinary/Demo pre-persistence redaction boundary |
+| `apps/diagnostic-cli` | Human and structured Analysis CLI for evidence, citations, and Candidate submission |
+| `skills/analyze-organization-evidence` | Companion Analysis skill enforcing evidence and uncertainty rules |
 
 One deployment represents exactly one Organization. The initial migration enforces that boundary while retaining Organization identifiers as a future migration seam. Bootstrap credentials use a random salt and scrypt verifier; browser session tokens are also persisted only as digests. Database contents do not contain a redeemable Bootstrap code or browser token.
 
@@ -90,6 +92,8 @@ All public HTTP routes live under `/api/v1`. The initial routes are:
 - `GET /api/v1/capture-records/:id` (browser member only)
 - `GET /api/v1/organization/activity` (structured/full-text discovery; Seeded excluded by default)
 - `POST /api/v1/comparisons` (selected Session/Turn evidence comparisons and stable refusals)
+- `POST/GET /api/v1/analysis-credentials` and `POST /api/v1/analysis-credentials/:id/revoke`
+- `POST/GET /api/v1/candidates` (Analysis submission and immutable Candidate history)
 - `GET /api/v1/sessions/:id/turns/:turnId` (authorized Turn citation target)
 - `GET /api/v1/sessions/:id/activity/:sourceEventId` (authorized activity citation target)
 - `PATCH /api/v1/sessions/:id/annotations` (Session owner or Administrator)
@@ -107,6 +111,8 @@ OpenAPI and Fastify runtime validation derive from the same shared Zod schemas. 
 ```
 
 Clients must tolerate additive response fields. Breaking contract changes require a new API version rather than an incompatible `/api/v1` change.
+
+See [Analysis CLI and Candidate skills](docs/analysis-cli-and-candidates.md) for scoped credential creation/revocation, structured commands, evidence rules, and immutable Candidate submission.
 
 `GET /api/v1/session` authenticates with the HttpOnly `browser_session` cookie. The cookie name, OpenAPI cookie security scheme, and route security requirement come from the shared contract package. Unknown `/api/v1` routes, malformed JSON, and validation failures also return the stable error envelope instead of Fastify's default response.
 

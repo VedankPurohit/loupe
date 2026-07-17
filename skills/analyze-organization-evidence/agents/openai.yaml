@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze Organization Evidence"
+  short_description: "Investigate Loupe evidence with citations"
+  default_prompt: "Use $analyze-organization-evidence to investigate captured Turns and propose a cited Candidate skill."

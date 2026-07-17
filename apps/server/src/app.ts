@@ -9,6 +9,10 @@ import {
 } from "fastify-type-provider-zod";
 
 import {
+  AnalysisCredentialCreateRequestSchema,
+  AnalysisCredentialCreateResponseSchema,
+  AnalysisCredentialIdParamsSchema,
+  AnalysisCredentialsResponseSchema,
   ApiErrorSchema,
   AuthenticatedSessionResponseSchema,
   BootstrapRedeemRequestSchema,
@@ -16,6 +20,9 @@ import {
   CaptureRecordAcceptedResponseSchema,
   CaptureRecordIdParamsSchema,
   CaptureRecordSchema,
+  CandidateHistoryResponseSchema,
+  CandidateSubmissionRequestSchema,
+  CandidateSubmissionResponseSchema,
   CitationActivityTargetResponseSchema,
   CitationTurnTargetResponseSchema,
   ComparisonActivityParamsSchema,
@@ -48,10 +55,14 @@ import {
   SessionAnnotationRequestSchema,
   SessionAnnotationResponseSchema,
   UpdateDeviceCapturePolicyRequestSchema,
+  analysisCredentialOpenApiSecurity,
+  analysisCredentialOpenApiSecurityScheme,
+  analysisCredentialSecuritySchemeName,
   browserSessionCookieName,
   browserSessionOpenApiSecurity,
   browserSessionOpenApiSecurityScheme,
   browserSessionSecuritySchemeName,
+  browserOrAnalysisOpenApiSecurity,
   deviceCredentialOpenApiSecurity,
   deviceCredentialOpenApiSecurityScheme,
   deviceCredentialSecuritySchemeName,
@@ -59,6 +70,7 @@ import {
 import type { VersionedPriceTable } from "@workspace/agent-adapter";
 
 import { ExecutionStore } from "./execution-store.js";
+import { CandidateError, CandidateStore } from "./candidate-store.js";
 import { IdentityError, IdentityStore } from "./identity-store.js";
 
 export interface BuildAppOptions {
@@ -75,6 +87,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const executionStore = databaseUrl
     ? new ExecutionStore(databaseUrl, options.priceTable)
     : undefined;
+  const candidateStore = databaseUrl ? new CandidateStore(databaseUrl) : undefined;
   let liveSequence = 0;
   const liveClients = new Set<NodeJS.WritableStream>();
 
@@ -92,6 +105,82 @@ export async function buildApp(options: BuildAppOptions = {}) {
     }
   };
 
+  const bearerToken = (request: FastifyRequest) => {
+    const authorization = request.headers.authorization;
+    return authorization?.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : undefined;
+  };
+
+  const authenticateEvidenceReader = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!identityStore) {
+      reply.status(503).send({
+        error: {
+          code: "DATABASE_UNAVAILABLE",
+          message: "Database-backed Organization evidence is unavailable.",
+        },
+      });
+      return undefined;
+    }
+    const bearer = bearerToken(request);
+    if (bearer) {
+      const analysis = await identityStore.authenticateAnalysis(bearer);
+      if (analysis) return { kind: "analysis" as const, ...analysis };
+      const device = await identityStore.authenticateDevice(bearer);
+      if (device) {
+        reply.status(403).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+            message: "A Device credential cannot access this Organization capability.",
+          },
+        });
+        return undefined;
+      }
+      reply.status(401).send({
+        error: {
+          code: "ANALYSIS_CREDENTIAL_REQUIRED",
+          message: "A valid, active Analysis credential is required.",
+        },
+      });
+      return undefined;
+    }
+    const browserToken = request.cookies[browserSessionCookieName];
+    const browserSession = browserToken
+      ? await identityStore.getSession(browserToken)
+      : undefined;
+    if (!browserSession) {
+      reply.status(401).send({
+        error: {
+          code: "BROWSER_SESSION_REQUIRED",
+          message: "An authenticated browser session is required.",
+        },
+      });
+      return undefined;
+    }
+    return { kind: "browser" as const, ...browserSession };
+  };
+
+  const rejectAnalysisScope = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    const bearer = bearerToken(request);
+    if (!bearer || !identityStore) return false;
+    const analysis = await identityStore.authenticateAnalysis(bearer);
+    if (!analysis) return false;
+    reply.status(403).send({
+      error: {
+        code: "ANALYSIS_CREDENTIAL_SCOPE_FORBIDDEN",
+        message:
+          "An Analysis credential can read Organization evidence and submit Candidates only.",
+      },
+    });
+    return true;
+  };
+
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(cookie);
@@ -105,6 +194,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       },
       components: {
         securitySchemes: {
+          [analysisCredentialSecuritySchemeName]:
+            analysisCredentialOpenApiSecurityScheme,
           [browserSessionSecuritySchemeName]: browserSessionOpenApiSecurityScheme,
           [deviceCredentialSecuritySchemeName]: deviceCredentialOpenApiSecurityScheme,
         },
@@ -131,6 +222,145 @@ export async function buildApp(options: BuildAppOptions = {}) {
         });
       }
       return { status: "ok" as const, apiVersion: "v1" as const };
+    },
+  );
+
+  app.post(
+    "/api/v1/analysis-credentials",
+    {
+      schema: {
+        operationId: "createAnalysisCredential",
+        security: browserSessionOpenApiSecurity,
+        body: AnalysisCredentialCreateRequestSchema,
+        response: {
+          201: AnalysisCredentialCreateResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const created = await identityStore.createAnalysisCredential(
+        session.member.id,
+        request.body,
+      );
+      if (!created) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return reply.status(201).send(created);
+    },
+  );
+
+  app.get(
+    "/api/v1/analysis-credentials",
+    {
+      schema: {
+        operationId: "listAnalysisCredentials",
+        security: browserSessionOpenApiSecurity,
+        response: {
+          200: AnalysisCredentialsResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return {
+        analysisCredentials: await identityStore.listAnalysisCredentials(
+          session.member.id,
+        ),
+      };
+    },
+  );
+
+  app.post(
+    "/api/v1/analysis-credentials/:id/revoke",
+    {
+      schema: {
+        operationId: "revokeAnalysisCredential",
+        security: browserSessionOpenApiSecurity,
+        params: AnalysisCredentialIdParamsSchema,
+        response: {
+          401: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      if (
+        !(await identityStore.revokeAnalysisCredential(
+          session.member.id,
+          request.params.id,
+        ))
+      ) {
+        return reply.status(404).send({
+          error: {
+            code: "ANALYSIS_CREDENTIAL_NOT_FOUND",
+            message: "The active Analysis credential was not found.",
+          },
+        });
+      }
+      return reply.status(204).send();
     },
   );
 
@@ -446,6 +676,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
+      if (await rejectAnalysisScope(request, reply)) return;
       const authorization = request.headers.authorization;
       const token = authorization?.startsWith("Bearer ")
         ? authorization.slice("Bearer ".length)
@@ -489,6 +720,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
+      if (await rejectAnalysisScope(request, reply)) return;
       const authorization = request.headers.authorization;
       const token = authorization?.startsWith("Bearer ")
         ? authorization.slice("Bearer ".length)
@@ -544,6 +776,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
+      if (await rejectAnalysisScope(request, reply)) return;
       const authorization = request.headers.authorization;
       const token = authorization?.startsWith("Bearer ")
         ? authorization.slice("Bearer ".length)
@@ -631,7 +864,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "getCaptureRecord",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         params: CaptureRecordIdParamsSchema,
         response: {
           200: CaptureRecordSchema,
@@ -651,32 +884,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const session = token ? await identityStore.getSession(token) : undefined;
-      if (!session) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
       const capture = await identityStore.getCaptureRecord(
-        session.organization.id,
+        reader.organization.id,
         request.params.id,
       );
       if (!capture) {
@@ -696,7 +907,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "getSourceEvent",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         params: SourceEventIdParamsSchema,
         response: {
           200: RetainedSourceEventSchema,
@@ -716,32 +927,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const session = token ? await identityStore.getSession(token) : undefined;
-      if (!session) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
       const event = await identityStore.getSourceEvent(
-        session.organization.id,
+        reader.organization.id,
         request.params.id,
       );
       if (!event) {
@@ -772,6 +961,18 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const token = authorization?.startsWith("Bearer ")
       ? authorization.slice("Bearer ".length)
       : undefined;
+    const analysis = token
+      ? await identityStore.authenticateAnalysis(token)
+      : undefined;
+    if (analysis) {
+      return reply.status(403).send({
+        error: {
+          code: "ANALYSIS_CREDENTIAL_SCOPE_FORBIDDEN",
+          message:
+            "An Analysis credential can read Organization evidence and submit Candidates only.",
+        },
+      });
+    }
     const device = token ? await identityStore.authenticateDevice(token) : undefined;
     if (!device) {
       return reply.status(401).send({
@@ -794,7 +995,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "searchOrganizationActivity",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         querystring: OrganizationActivityQuerySchema,
         response: {
           200: OrganizationActivityResponseSchema,
@@ -813,32 +1014,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const browserSession = token ? await identityStore.getSession(token) : undefined;
-      if (!browserSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
       return executionStore.searchActivity(
-        browserSession.organization.id,
+        reader.organization.id,
         request.query,
       );
     },
@@ -849,7 +1028,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "compareExecutionEvidence",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         body: ComparisonRequestSchema,
         response: {
           200: ComparisonResponseSchema,
@@ -868,31 +1047,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const browserSession = token ? await identityStore.getSession(token) : undefined;
-      if (!browserSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
-      return executionStore.compare(browserSession.organization.id, request.body);
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
+      return executionStore.compare(reader.organization.id, request.body);
     },
   );
 
@@ -901,7 +1058,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "resolveTurnEvidenceCitation",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         params: ComparisonTurnParamsSchema,
         response: {
           200: CitationTurnTargetResponseSchema,
@@ -921,32 +1078,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const browserSession = token ? await identityStore.getSession(token) : undefined;
-      if (!browserSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
       const target = await executionStore.getCitationTurn(
-        browserSession.organization.id,
+        reader.organization.id,
         request.params.id,
         request.params.turnId,
       );
@@ -967,7 +1102,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "resolveActivityEvidenceCitation",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         params: ComparisonActivityParamsSchema,
         response: {
           200: CitationActivityTargetResponseSchema,
@@ -987,32 +1122,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const browserSession = token ? await identityStore.getSession(token) : undefined;
-      if (!browserSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
       const target = await executionStore.getCitationActivity(
-        browserSession.organization.id,
+        reader.organization.id,
         request.params.id,
         request.params.activityId,
       );
@@ -1054,6 +1167,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
+      if (await rejectAnalysisScope(request, reply)) return;
       const token = request.cookies[browserSessionCookieName];
       const browserSession = token ? await identityStore.getSession(token) : undefined;
       if (!browserSession) {
@@ -1145,7 +1259,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "listExecutionSessions",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         response: {
           200: ExecutionSessionsResponseSchema,
           401: ApiErrorSchema,
@@ -1163,33 +1277,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const browserSession = token
-        ? await identityStore.getSession(token)
-        : undefined;
-      if (!browserSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
-      return { sessions: await executionStore.listSessions(browserSession.organization.id) };
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
+      return { sessions: await executionStore.listSessions(reader.organization.id) };
     },
   );
   app.get(
@@ -1197,7 +1287,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "getExecutionSession",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         params: ExecutionSessionIdParamsSchema,
         response: {
           200: ExecutionSessionDetailResponseSchema,
@@ -1217,34 +1307,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const authorization = request.headers.authorization;
-      if (authorization?.startsWith("Bearer ")) {
-        const device = await identityStore.authenticateDevice(
-          authorization.slice("Bearer ".length),
-        );
-        if (device) {
-          return reply.status(403).send({
-            error: {
-              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
-              message: "A Device credential cannot access this Organization capability.",
-            },
-          });
-        }
-      }
-      const token = request.cookies[browserSessionCookieName];
-      const browserSession = token
-        ? await identityStore.getSession(token)
-        : undefined;
-      if (!browserSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
       const detail = await executionStore.getSession(
-        browserSession.organization.id,
+        reader.organization.id,
         request.params.id,
       );
       if (!detail) {
@@ -1263,7 +1329,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "watchExecutionSessions",
-        security: browserSessionOpenApiSecurity,
+        security: browserOrAnalysisOpenApiSecurity,
         response: { 401: ApiErrorSchema, 503: ApiErrorSchema },
       },
     },
@@ -1276,18 +1342,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
-      const token = request.cookies[browserSessionCookieName];
-      const browserSession = token
-        ? await identityStore.getSession(token)
-        : undefined;
-      if (!browserSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "An authenticated browser session is required.",
-          },
-        });
-      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
       reply.hijack();
       reply.raw.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
@@ -1304,12 +1360,89 @@ export async function buildApp(options: BuildAppOptions = {}) {
     "/api/v1/candidates",
     {
       schema: {
-        operationId: "denyDeviceCandidateSubmission",
-        security: deviceCredentialOpenApiSecurity,
-        response: { 401: ApiErrorSchema, 403: ApiErrorSchema, 503: ApiErrorSchema },
+        operationId: "submitCandidateSkill",
+        security: analysisCredentialOpenApiSecurity,
+        body: CandidateSubmissionRequestSchema,
+        response: {
+          201: CandidateSubmissionResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          409: ApiErrorSchema,
+          422: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
       },
     },
-    forbiddenDeviceCapability,
+    async (request, reply) => {
+      if (!identityStore || !candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Candidate submission is unavailable.",
+          },
+        });
+      }
+      const token = bearerToken(request);
+      const analysis = token
+        ? await identityStore.authenticateAnalysis(token)
+        : undefined;
+      if (!analysis) {
+        const device = token
+          ? await identityStore.authenticateDevice(token)
+          : undefined;
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot submit a Candidate.",
+            },
+          });
+        }
+        return reply.status(401).send({
+          error: {
+            code: "ANALYSIS_CREDENTIAL_REQUIRED",
+            message: "A valid, active Analysis credential is required.",
+          },
+        });
+      }
+      return reply.status(201).send(
+        await candidateStore.submit(
+          analysis.organization.id,
+          analysis.member.id,
+          analysis.analysisCredential.id,
+          request.body,
+        ),
+      );
+    },
+  );
+  app.get(
+    "/api/v1/candidates",
+    {
+      schema: {
+        operationId: "listCandidateSkillHistory",
+        security: browserOrAnalysisOpenApiSecurity,
+        response: {
+          200: CandidateHistoryResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!candidateStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Candidate history is unavailable.",
+          },
+        });
+      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
+      return { items: await candidateStore.list(reader.organization.id) };
+    },
   );
   app.post(
     "/api/v1/administration/actions",
@@ -1439,6 +1572,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
   );
 
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof CandidateError) {
+      return reply
+        .status(error.code === "CANDIDATE_VERSION_EXISTS" ? 409 : 422)
+        .send({ error: { code: error.code, message: error.message } });
+    }
     if (error instanceof IdentityError) {
       const status =
         error.code === "BOOTSTRAP_CODE_ALREADY_REDEEMED"
@@ -1474,7 +1612,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
     app.addHook("onClose", async () => {
       for (const client of liveClients) client.end();
       liveClients.clear();
-      await Promise.all([identityStore.close(), executionStore.close()]);
+      await Promise.all([
+        identityStore.close(),
+        executionStore.close(),
+        candidateStore?.close(),
+      ]);
     });
   }
   await app.ready();
