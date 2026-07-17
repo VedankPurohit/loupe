@@ -28,6 +28,7 @@ import {
   requireSecureServerUrl,
   revokeMacosSetupCredential,
   uninstallMacosSetup,
+  verifyCodexHookTrust,
 } from "./setup.js";
 
 const defaultStateDir = join(
@@ -193,6 +194,13 @@ async function setup(args: string[]): Promise<void> {
     preview,
     enrollment,
     serviceManager: manager,
+    verifyHookTrust: () =>
+      verifyCodexHookTrust({
+        codexHome: preview.codexHome,
+        cwd: process.cwd(),
+        expectedSourcePath: join(preview.codexHome, "hooks.json"),
+        expectedCommand: preview.hookCommand,
+      }),
     verifyDelivery: async () => {
       const eventIds = await recordSetupVerification({ stateDir });
       for (let attempt = 0; attempt < 12; attempt += 1) {

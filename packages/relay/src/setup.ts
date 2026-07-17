@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import {
@@ -55,6 +55,7 @@ export interface MacosSetupPreview {
   serverUrl: string;
   nodePath: string;
   relayCliPath: string;
+  hookCommand: string;
   otlpPort: number;
   files: Array<{ path: string; action: "create" | "merge" }>;
   disclosures: string[];
@@ -199,6 +200,7 @@ export async function previewMacosSetup(options: {
   ].join(" ");
   return {
     ...options,
+    hookCommand,
     serverUrl: parsedUrl.toString().replace(/\/$/, ""),
     otlpPort,
     before,
@@ -220,6 +222,134 @@ export async function previewMacosSetup(options: {
       "Setup installs a per-user launchd service that starts at login and restarts after failure.",
     ],
   };
+}
+
+interface HooksListResponse {
+  data?: Array<{
+    hooks?: Array<{
+      sourcePath?: string;
+      command?: string | null;
+      enabled?: boolean;
+      trustStatus?: "managed" | "untrusted" | "trusted" | "modified";
+    }>;
+  }>;
+}
+
+export async function verifyCodexHookTrust(options: {
+  codexHome: string;
+  cwd: string;
+  expectedSourcePath: string;
+  expectedCommand: string;
+  codexPath?: string;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  const child = spawn(options.codexPath ?? "codex", ["app-server"], {
+    env: { ...process.env, CODEX_HOME: options.codexHome },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let settled = false;
+  const responses = new Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void }
+  >();
+  const fail = (error: Error) => {
+    if (settled) return;
+    settled = true;
+    for (const pending of responses.values()) pending.reject(error);
+    responses.clear();
+  };
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+    for (;;) {
+      const newline = stdout.indexOf("\n");
+      if (newline < 0) break;
+      const line = stdout.slice(0, newline).trim();
+      stdout = stdout.slice(newline + 1);
+      if (!line) continue;
+      try {
+        const message = JSON.parse(line) as {
+          id?: number;
+          result?: unknown;
+          error?: { message?: string };
+        };
+        if (typeof message.id !== "number") continue;
+        const pending = responses.get(message.id);
+        if (!pending) continue;
+        responses.delete(message.id);
+        if (message.error) {
+          pending.reject(
+            new Error(message.error.message ?? "Codex app-server request failed."),
+          );
+        } else {
+          pending.resolve(message.result);
+        }
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-4_000);
+  });
+  child.on("error", fail);
+  child.on("exit", (code) => {
+    if (responses.size > 0) {
+      fail(
+        new Error(
+          `Codex app-server exited with status ${code ?? "unknown"}${stderr.trim() ? `: ${stderr.trim()}` : ""}`,
+        ),
+      );
+    }
+  });
+
+  const request = (id: number, method: string, params: Record<string, unknown>) =>
+    new Promise<unknown>((resolve, reject) => {
+      responses.set(id, { resolve, reject });
+      child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+    });
+  const timer = setTimeout(
+    () => fail(new Error("Codex app-server hook inspection timed out.")),
+    options.timeoutMs ?? 10_000,
+  );
+  try {
+    await request(1, "initialize", {
+      clientInfo: {
+        name: "coding_agent_observability",
+        title: "Coding Agent Observability Setup",
+        version: "1.0.0",
+      },
+    });
+    child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
+    const result = (await request(2, "hooks/list", {
+      cwds: [options.cwd],
+    })) as HooksListResponse;
+    const installedHooks = (result.data ?? []).flatMap((entry) => entry.hooks ?? []).filter(
+      (hook) =>
+        hook.sourcePath === options.expectedSourcePath &&
+        hook.command === options.expectedCommand,
+    );
+    return (
+      installedHooks.length === lifecycleEvents.length &&
+      installedHooks.every(
+        (hook) =>
+          hook.enabled === true &&
+          (hook.trustStatus === "trusted" || hook.trustStatus === "managed"),
+      )
+    );
+  } catch (error) {
+    throw new Error(
+      `CODEX_HOOK_TRUST_INSPECTION_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    settled = true;
+    clearTimeout(timer);
+    responses.clear();
+    child.kill();
+  }
 }
 
 async function writePrivate(path: string, content: string): Promise<void> {
@@ -255,6 +385,7 @@ export async function applyMacosSetup(options: {
   enrollment: { credential: string; deviceId: string };
   serviceManager: RelayServiceManager;
   verifyDelivery: () => Promise<boolean>;
+  verifyHookTrust: () => Promise<boolean>;
   codexVersion?: string;
 }): Promise<void> {
   const { preview } = options;
@@ -311,6 +442,11 @@ export async function applyMacosSetup(options: {
     await options.serviceManager.start();
     if (!(await options.verifyDelivery())) {
       throw new Error("SETUP_VERIFICATION_FAILED: relay test event was not acknowledged.");
+    }
+    if (!(await options.verifyHookTrust())) {
+      throw new Error(
+        "SETUP_HOOK_TRUST_REQUIRED: review and trust the installed hooks in Codex, then rerun setup.",
+      );
     }
   } catch (error) {
     await uninstallMacosSetup({ stateDir: preview.stateDir, serviceManager: options.serviceManager });
