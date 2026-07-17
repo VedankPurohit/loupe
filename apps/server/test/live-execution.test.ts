@@ -405,6 +405,7 @@ describe.sequential("live execution projection through /api/v1", () => {
         payload: logPayload({
           "event.name": "codex.tool_result",
           "conversation.id": "agent-run-probe-003",
+          "turn.id": "turn-probe-001",
           tool_name: "exec_command",
           call_id: "tool-use-probe-001",
           arguments: "<synthetic-content-redacted>",
@@ -602,6 +603,93 @@ describe.sequential("live execution projection through /api/v1", () => {
           }),
         ],
       },
+    });
+  });
+
+  it("does not associate OTel evidence whose thread and Turn identities belong to different Sessions", async () => {
+    const victimSessionId = "session-conflicting-identity-victim";
+    const victimTurnId = "turn-conflicting-identity-victim";
+    const victimThreadId = "thread-conflicting-identity-victim";
+    const attackerSessionId = "session-conflicting-identity-attacker";
+    const attackerThreadId = "thread-conflicting-identity-attacker";
+    const injectedCallId = "cross-session-injected-call";
+    const injected = syntheticSourceEvent({
+      producerEvent: "codex.tool_result",
+      occurredAt: "2026-07-17T11:00:12.000Z",
+      payload: logPayload({
+        "event.name": "codex.tool_result",
+        "conversation.id": attackerThreadId,
+        "turn.id": victimTurnId,
+        tool_name: "exec_command",
+        call_id: injectedCallId,
+        output: "attacker-controlled cross-session content",
+        success: true,
+      }),
+    });
+    const events = [
+      toSourceEvent({
+        captured_at: "2026-07-17T11:00:10.000Z",
+        payload: {
+          hook_event_name: "SessionStart",
+          session_id: victimSessionId,
+          agent_id: victimThreadId,
+          source: "startup",
+        },
+      }),
+      toSourceEvent({
+        captured_at: "2026-07-17T11:00:11.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          session_id: victimSessionId,
+          turn_id: victimTurnId,
+          agent_id: victimThreadId,
+        },
+      }),
+      toSourceEvent({
+        captured_at: "2026-07-17T11:00:10.500Z",
+        payload: {
+          hook_event_name: "SessionStart",
+          session_id: attackerSessionId,
+          agent_id: attackerThreadId,
+          source: "startup",
+        },
+      }),
+      injected,
+    ];
+    expect((await deliver(baseUrl, deviceCredential, events)).status).toBe(200);
+
+    for (const sessionId of [victimSessionId, attackerSessionId]) {
+      const response = await fetch(`${baseUrl}/api/v1/sessions/${sessionId}`, {
+        headers: { cookie: browserCookie },
+      });
+      expect(response.status).toBe(200);
+      const detail = (await response.json()) as {
+        evidence: { tools: Array<{ identifiers: { otelCallId: string | null } }> };
+      };
+      expect(
+        detail.evidence.tools.some(
+          (tool) => tool.identifiers.otelCallId === injectedCallId,
+        ),
+      ).toBe(false);
+    }
+
+    const retained = await fetch(`${baseUrl}/api/v1/source-events/${injected.id}`, {
+      headers: { cookie: browserCookie },
+    });
+    expect(retained.status).toBe(200);
+    expect(await retained.json()).toMatchObject({
+      id: injected.id,
+      source: "codex_otel_log",
+      adapter: { status: "preserved", reason: "unmapped_event" },
+      rawPayload: logPayload({
+        "event.name": "codex.tool_result",
+        "conversation.id": attackerThreadId,
+        "turn.id": victimTurnId,
+        tool_name: "exec_command",
+        call_id: injectedCallId,
+        output: "attacker-controlled cross-session content",
+        success: true,
+      }),
     });
   });
 

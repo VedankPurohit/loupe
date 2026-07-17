@@ -83,7 +83,12 @@ must use these `/api/v1` routes and never PostgreSQL.
 Rich evidence is associated only when a server-side adapter accepts the
 producer version, a source-defined identity or canonical adapter observation
 matches the Session, and delivery provenance matches the owning Device.
-Arbitrary nested tool input/output fields are never searched for identities.
+When a source asserts identities at more than one execution level, every
+asserted Session, Turn, and agent/thread identity must resolve within the same
+Session. A match at one level never overrides a contradiction at another;
+contradictory records remain retained as raw source evidence but are not
+associated with either Session's rich evidence. Arbitrary nested tool
+input/output fields are never searched for identities.
 Downgraded evidence remains retained and retrievable as a source event without
 becoming documented or exact projection data.
 

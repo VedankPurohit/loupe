@@ -6,7 +6,11 @@ import type {
   OrganizationStandardDistribution,
 } from "@workspace/contracts";
 
-type Message = { tone: "success" | "error"; text: string };
+type Message = {
+  tone: "success" | "error";
+  text: string;
+  retry?: { label: string; action: () => void | Promise<void> };
+};
 
 const claimClassificationLabels = {
   repeated_pattern: "Repeated pattern",
@@ -51,26 +55,42 @@ export function CandidateStandards() {
   const [message, setMessage] = useState<Message>();
   const [editingId, setEditingId] = useState<string>();
 
-  async function load() {
-    const [candidateResponse, standardResponse] = await Promise.all([
-      fetch("/api/v1/candidates"),
-      fetch("/api/v1/organization-standards"),
-    ]);
-    if (!candidateResponse.ok || !standardResponse.ok) {
+  async function load(clearMessageOnSuccess = true) {
+    try {
+      const [candidateResponse, standardResponse] = await Promise.all([
+        fetch("/api/v1/candidates"),
+        fetch("/api/v1/organization-standards"),
+      ]);
+      if (!candidateResponse.ok || !standardResponse.ok) {
+        setMessage({
+          tone: "error",
+          text: "Candidate approvals or distribution status could not be loaded.",
+          retry: {
+            label: "Try loading Candidate Standards again",
+            action: load,
+          },
+        });
+        return;
+      }
+      const candidateBody = (await candidateResponse.json()) as {
+        items: CandidateSubmissionResponse[];
+      };
+      const standardBody = (await standardResponse.json()) as {
+        items: OrganizationStandardDistribution[];
+      };
+      setCandidates(candidateBody.items);
+      setStandards(standardBody.items);
+      if (clearMessageOnSuccess) setMessage(undefined);
+    } catch {
       setMessage({
         tone: "error",
-        text: "Candidate approvals or distribution status could not be loaded.",
+        text: "Loading Candidate approvals and distribution status failed because the server could not be reached. Check the connection and try again.",
+        retry: {
+          label: "Try loading Candidate Standards again",
+          action: load,
+        },
       });
-      return;
     }
-    const candidateBody = (await candidateResponse.json()) as {
-      items: CandidateSubmissionResponse[];
-    };
-    const standardBody = (await standardResponse.json()) as {
-      items: OrganizationStandardDistribution[];
-    };
-    setCandidates(candidateBody.items);
-    setStandards(standardBody.items);
   }
 
   useEffect(() => {
@@ -95,26 +115,37 @@ export function CandidateStandards() {
 
   async function approve(item: CandidateSubmissionResponse) {
     setMessage(undefined);
-    const response = await fetch(
-      `/api/v1/candidates/${item.candidate.id}/versions/${item.version.id}/approve`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ artifactHash: item.version.artifactHash }),
-      },
-    );
-    if (!response.ok) {
+    try {
+      const response = await fetch(
+        `/api/v1/candidates/${item.candidate.id}/versions/${item.version.id}/approve`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ artifactHash: item.version.artifactHash }),
+        },
+      );
+      if (!response.ok) {
+        setMessage({
+          tone: "error",
+          text: await errorMessage(response, "The exact artifact could not be approved."),
+        });
+        return;
+      }
+      setMessage({
+        tone: "success",
+        text: "Approved the exact artifact as a mandatory Organization standard release.",
+      });
+      await load(false);
+    } catch {
       setMessage({
         tone: "error",
-        text: await errorMessage(response, "The exact artifact could not be approved."),
+        text: "Approving the exact Candidate artifact failed because the server could not be reached. Check the connection and try again.",
+        retry: {
+          label: "Try approving exact artifact again",
+          action: () => approve(item),
+        },
       });
-      return;
     }
-    setMessage({
-      tone: "success",
-      text: "Approved the exact artifact as a mandatory Organization standard release.",
-    });
-    await load();
   }
 
   async function reject(
@@ -123,23 +154,39 @@ export function CandidateStandards() {
   ) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const response = await fetch(
-      `/api/v1/candidates/${item.candidate.id}/versions/${item.version.id}/reject`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ note: data.get("note") }),
-      },
-    );
-    if (!response.ok) {
+    await rejectWithNote(item, String(data.get("note") ?? ""));
+  }
+
+  async function rejectWithNote(item: CandidateSubmissionResponse, note: string) {
+    setMessage(undefined);
+    try {
+      const response = await fetch(
+        `/api/v1/candidates/${item.candidate.id}/versions/${item.version.id}/reject`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ note }),
+        },
+      );
+      if (!response.ok) {
+        setMessage({
+          tone: "error",
+          text: await errorMessage(response, "The Candidate could not be rejected."),
+        });
+        return;
+      }
+      setMessage({ tone: "success", text: "Rejected this immutable Candidate version." });
+      await load(false);
+    } catch {
       setMessage({
         tone: "error",
-        text: await errorMessage(response, "The Candidate could not be rejected."),
+        text: "Rejecting the Candidate version failed because the server could not be reached. Check the connection and try again.",
+        retry: {
+          label: "Try rejecting Candidate version again",
+          action: () => rejectWithNote(item, note),
+        },
       });
-      return;
     }
-    setMessage({ tone: "success", text: "Rejected this immutable Candidate version." });
-    await load();
   }
 
   async function edit(
@@ -165,37 +212,53 @@ export function CandidateStandards() {
         .map((citationId) => String(citationId)),
     }));
     const artifactHash = await hashPackage(candidatePackage);
-    const response = await fetch(
-      `/api/v1/candidates/${item.candidate.id}/versions/${item.version.id}/edit`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          version: data.get("version"),
-          reviewerContext: data.get("reviewerContext"),
-          uncertainty: {
-            level: data.get("uncertaintyLevel"),
-            statement: data.get("uncertaintyStatement"),
-          },
-          claims,
-          package: candidatePackage,
-          artifactHash,
-        }),
+    await saveEdit(item, {
+      version: data.get("version"),
+      reviewerContext: data.get("reviewerContext"),
+      uncertainty: {
+        level: data.get("uncertaintyLevel"),
+        statement: data.get("uncertaintyStatement"),
       },
-    );
-    if (!response.ok) {
+      claims,
+      package: candidatePackage,
+      artifactHash,
+    });
+  }
+
+  async function saveEdit(item: CandidateSubmissionResponse, payload: object) {
+    setMessage(undefined);
+    try {
+      const response = await fetch(
+        `/api/v1/candidates/${item.candidate.id}/versions/${item.version.id}/edit`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!response.ok) {
+        setMessage({
+          tone: "error",
+          text: await errorMessage(response, "A new immutable version could not be created."),
+        });
+        return;
+      }
+      setEditingId(undefined);
+      setMessage({
+        tone: "success",
+        text: "Created a new immutable version. It is unapproved and requires fresh review.",
+      });
+      await load(false);
+    } catch {
       setMessage({
         tone: "error",
-        text: await errorMessage(response, "A new immutable version could not be created."),
+        text: "Creating a new immutable Candidate version failed because the server could not be reached. Check the connection and try again.",
+        retry: {
+          label: "Try saving unapproved version again",
+          action: () => saveEdit(item, payload),
+        },
       });
-      return;
     }
-    setEditingId(undefined);
-    setMessage({
-      tone: "success",
-      text: "Created a new immutable version. It is unapproved and requires fresh review.",
-    });
-    await load();
   }
 
   async function distributionAction(
@@ -203,23 +266,45 @@ export function CandidateStandards() {
     action: "pause" | "resume" | "rollback",
     releaseId?: string,
   ) {
-    const response = await fetch(
-      `/api/v1/organization-standards/${standardId}/${action}`,
-      {
-        method: "POST",
-        headers: releaseId ? { "content-type": "application/json" } : undefined,
-        body: releaseId ? JSON.stringify({ releaseId }) : undefined,
-      },
-    );
-    if (!response.ok) {
+    setMessage(undefined);
+    try {
+      const response = await fetch(
+        `/api/v1/organization-standards/${standardId}/${action}`,
+        {
+          method: "POST",
+          headers: releaseId ? { "content-type": "application/json" } : undefined,
+          body: releaseId ? JSON.stringify({ releaseId }) : undefined,
+        },
+      );
+      if (!response.ok) {
+        setMessage({
+          tone: "error",
+          text: await errorMessage(response, `Distribution could not ${action}.`),
+        });
+        return;
+      }
+      setMessage({ tone: "success", text: `Distribution ${action} completed.` });
+      await load(false);
+    } catch {
+      const operation = action === "pause"
+        ? "Pausing distribution"
+        : action === "resume"
+          ? "Resuming distribution"
+          : "Rolling back distribution";
+      const retryLabel = action === "pause"
+        ? "Try pausing distribution again"
+        : action === "resume"
+          ? "Try resuming distribution again"
+          : "Try rolling back distribution again";
       setMessage({
         tone: "error",
-        text: await errorMessage(response, `Distribution could not ${action}.`),
+        text: `${operation} failed because the server could not be reached. Check the connection and try again.`,
+        retry: {
+          label: retryLabel,
+          action: () => distributionAction(standardId, action, releaseId),
+        },
       });
-      return;
     }
-    setMessage({ tone: "success", text: `Distribution ${action} completed.` });
-    await load();
   }
 
   return (
@@ -231,9 +316,21 @@ export function CandidateStandards() {
         Only a human Administrator can publish a mandatory release.
       </p>
       {message && (
-        <p role={message.tone === "error" ? "alert" : "status"} className={message.tone}>
-          {message.text}
-        </p>
+        <div
+          role={message.tone === "error" ? "alert" : "status"}
+          className={`${message.tone}${message.retry ? " operation-error" : ""}`}
+        >
+          <span>{message.text}</span>
+          {message.retry && (
+            <button
+              className="secondary-button"
+              onClick={() => void message.retry?.action()}
+              type="button"
+            >
+              {message.retry.label}
+            </button>
+          )}
+        </div>
       )}
       {orderedCandidates.length === 0 && (
         <p className="empty-copy">No Candidate versions are awaiting review.</p>

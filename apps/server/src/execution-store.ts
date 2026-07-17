@@ -352,27 +352,41 @@ function toCodexObservation(
   };
 }
 
-function trustedSourceIdentityValues(
+interface ExecutionIdentityHierarchy {
+  sessions: Set<string>;
+  turns: Set<string>;
+  agents: Set<string>;
+}
+
+function trustedSourceIdentityHierarchy(
   observation: ReturnType<typeof toCodexObservation>,
-): Set<string> {
+): ExecutionIdentityHierarchy | undefined {
   const disposition = adaptCodexObservation(observation);
   if (
     disposition.status === "downgraded" ||
     disposition.status === "rejected"
   ) {
-    return new Set();
+    return undefined;
   }
-  const found = new Set<string>();
+  const found: ExecutionIdentityHierarchy = {
+    sessions: new Set(),
+    turns: new Set(),
+    agents: new Set(),
+  };
   for (const canonical of disposition.canonical) {
-    found.add(canonical.sessionId);
-    if (canonical.turnId) found.add(canonical.turnId);
+    found.sessions.add(canonical.sessionId);
+    if (canonical.turnId) found.turns.add(canonical.turnId);
   }
   if (observation.source === "codex_otel_log") {
     const attributes = otelAttributes(observation.payload);
-    for (const key of ["session.id", "conversation.id", "turn.id", "thread.id"]) {
-      const identity = attributes?.[key];
-      if (identity) found.add(identity);
-    }
+    const sessionId = attributes?.["session.id"];
+    const conversationId = attributes?.["conversation.id"];
+    const turnId = attributes?.["turn.id"];
+    const threadId = attributes?.["thread.id"];
+    if (sessionId) found.sessions.add(sessionId);
+    if (conversationId) found.agents.add(conversationId);
+    if (turnId) found.turns.add(turnId);
+    if (threadId) found.agents.add(threadId);
   }
   if (observation.source === "codex_otel_trace") {
     const payload = asRecord(observation.payload);
@@ -384,23 +398,48 @@ function trustedSourceIdentityValues(
       for (const attributeValue of attributes) {
         const attribute = asRecord(attributeValue);
         const key = stringField(attribute, "key");
-        if (!key || !["session.id", "conversation.id", "turn.id", "thread.id"].includes(key)) {
-          continue;
-        }
+        if (!key) continue;
         const wrapped = asRecord(attribute?.value);
         const scalar = wrapped?.stringValue ?? wrapped?.string_value;
-        if (typeof scalar === "string") found.add(scalar);
+        if (typeof scalar !== "string") continue;
+        if (key === "session.id") found.sessions.add(scalar);
+        if (key === "conversation.id" || key === "thread.id") found.agents.add(scalar);
+        if (key === "turn.id") found.turns.add(scalar);
       }
     }
   }
   if (observation.source === "codex_rollout") {
     const payload = asRecord(observation.payload);
-    for (const key of ["session_id", "turn_id", "agent_id", "thread_id"]) {
-      const identity = stringField(payload, key);
-      if (identity) found.add(identity);
-    }
+    const sessionId = stringField(payload, "session_id");
+    const turnId = stringField(payload, "turn_id");
+    const agentId = stringField(payload, "agent_id");
+    const threadId = stringField(payload, "thread_id");
+    if (sessionId) found.sessions.add(sessionId);
+    if (turnId) found.turns.add(turnId);
+    if (agentId) found.agents.add(agentId);
+    if (threadId) found.agents.add(threadId);
   }
   return found;
+}
+
+function identityHierarchyAssociates(
+  source: ExecutionIdentityHierarchy,
+  session: ExecutionIdentityHierarchy,
+): boolean {
+  const groups: Array<keyof ExecutionIdentityHierarchy> = [
+    "sessions",
+    "turns",
+    "agents",
+  ];
+  let assertedIdentity = false;
+  for (const group of groups) {
+    if (source[group].size === 0) continue;
+    assertedIdentity = true;
+    if (![...source[group]].every((identity) => session[group].has(identity))) {
+      return false;
+    }
+  }
+  return assertedIdentity;
 }
 
 function buildProjection(rows: SourceRow[]): SessionState[] {
@@ -1563,11 +1602,15 @@ export class ExecutionStore {
         .where(eq(sourceEvents.organizationId, organizationId))
         .orderBy(asc(sourceEvents.occurredAt)),
     ]);
-    const sessionIdentity = new Set<string>([
-      row.canonicalSessionId,
-      ...turns.map((turn) => turn.canonicalTurnId),
-      ...agents.flatMap((agent) => [agent.publicId, agent.codexThreadId].filter(Boolean) as string[]),
-    ]);
+    const sessionIdentity: ExecutionIdentityHierarchy = {
+      sessions: new Set([row.canonicalSessionId]),
+      turns: new Set(turns.map((turn) => turn.canonicalTurnId)),
+      agents: new Set(
+        agents.flatMap(
+          (agent) => [agent.publicId, agent.codexThreadId].filter(Boolean) as string[],
+        ),
+      ),
+    };
     const ownershipReconciliation = row.ownershipReconciliation as Reconciliation;
     const deliveryDeviceIds = new Set<string>([
       ...(row.ownerDeviceId ? [row.ownerDeviceId] : []),
@@ -1582,8 +1625,8 @@ export class ExecutionStore {
         return [];
       }
       const observation = toCodexObservation(source);
-      const identities = trustedSourceIdentityValues(observation);
-      if (![...identities].some((identity) => sessionIdentity.has(identity))) return [];
+      const identities = trustedSourceIdentityHierarchy(observation);
+      if (!identities || !identityHierarchyAssociates(identities, sessionIdentity)) return [];
       return [
         {
           sourceEventId: source.id,
