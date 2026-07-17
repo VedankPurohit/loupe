@@ -435,7 +435,13 @@ function identityHierarchyAssociates(
   for (const group of groups) {
     if (source[group].size === 0) continue;
     assertedIdentity = true;
-    if (![...source[group]].every((identity) => session[group].has(identity))) {
+    const matches = (identity: string) =>
+      session[group].has(identity) ||
+      // A Codex root thread's conversation/thread id is the tree-wide session
+      // id, so an observed agent identity may associate through the session's
+      // canonical id even though no Subagent run carries it.
+      (group === "agents" && session.sessions.has(identity));
+    if (![...source[group]].every(matches)) {
       return false;
     }
   }
