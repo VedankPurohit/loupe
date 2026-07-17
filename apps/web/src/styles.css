@@ -225,8 +225,8 @@ pre { max-height: 175px; overflow: auto; margin: 0; padding: 10px; color: #d7e1e
 .linear-agent-tree { border-right: 1px solid #b7bcb8; }
 .linear-fallback h3, .investigation-tools h3 { margin: 3px 0 0; font-family: var(--display); font-size: 1.65rem; font-weight: 500; }
 .linear-agent-tree ul, .linear-timeline ol { display: grid; gap: 6px; margin: 14px 0 0; padding: 0; list-style: none; }
-.linear-agent-tree li[aria-level="2"] { margin-left: 24px; }
-.linear-agent-tree li[aria-selected="true"] button { color: #071316; border-color: #168c99; background: var(--cyan-soft); }
+.linear-agent-tree li > ul { margin-left: 24px; }
+.linear-agent-tree button[aria-pressed="true"] { color: #071316; border-color: #168c99; background: var(--cyan-soft); }
 .linear-agent-tree button { display: grid; grid-template-columns: auto 1fr; gap: 3px 9px; width: 100%; padding: 9px; color: #263136; text-align: left; border: 1px solid #c1c5c0; background: #f5f5f0; }
 .linear-agent-tree button > span { font-family: var(--utility); font-size: .58rem; text-transform: uppercase; }
 .linear-agent-tree button strong { overflow: hidden; font-size: .73rem; text-overflow: ellipsis; white-space: nowrap; }

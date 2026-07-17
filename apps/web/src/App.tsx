@@ -16,8 +16,45 @@ type View =
   | { kind: "session"; session: AuthenticatedSessionResponse }
   | { kind: "error"; message: string };
 
+type RetryNotice = {
+  message: string;
+  retryLabel: string;
+  retry: () => void | Promise<void>;
+};
+
 async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => undefined);
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch {
+    throw new Error("The server could not be reached.");
+  }
+  const body = await readJson(response);
+  if (!response.ok) {
+    const error = body as { error?: { message?: string } } | undefined;
+    throw new Error(error?.error?.message ?? `The server rejected the request (${response.status}).`);
+  }
+  return body as T;
+}
+
+function operationFailure(operation: string, cause: unknown) {
+  const reason = cause instanceof Error ? cause.message : "The request did not complete.";
+  return `${operation} failed. ${reason} Check the connection and try again.`;
+}
+
+function RetryAlert({ notice }: { notice: RetryNotice }) {
+  return (
+    <div role="alert" className="error operation-error">
+      <span>{notice.message}</span>
+      <button className="secondary-button" onClick={() => void notice.retry()} type="button">
+        {notice.retryLabel}
+      </button>
+    </div>
+  );
 }
 
 export function App() {
@@ -25,21 +62,25 @@ export function App() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>();
   const [devices, setDevices] = useState<EnrolledDevice[]>([]);
-  const [deviceError, setDeviceError] = useState<string>();
+  const [deviceError, setDeviceError] = useState<RetryNotice>();
   const [enrollmentGrant, setEnrollmentGrant] = useState<string>();
   const [inviteCode, setInviteCode] = useState<string>();
-  const [inviteError, setInviteError] = useState<string>();
+  const [inviteError, setInviteError] = useState<RetryNotice>();
   const [examplePackStatus, setExamplePackStatus] = useState<string>();
+  const [examplePackError, setExamplePackError] = useState<RetryNotice>();
 
   async function loadDevices() {
-    const response = await fetch("/api/v1/devices");
-    if (!response.ok) {
-      setDeviceError("Enrolled devices could not be loaded.");
-      return;
+    try {
+      const body = await requestJson<{ devices: EnrolledDevice[] }>("/api/v1/devices");
+      setDevices(body.devices);
+      setDeviceError(undefined);
+    } catch (cause) {
+      setDeviceError({
+        message: operationFailure("Loading enrolled devices", cause),
+        retryLabel: "Try loading devices again",
+        retry: loadDevices,
+      });
     }
-    const body = (await response.json()) as { devices: EnrolledDevice[] };
-    setDevices(body.devices);
-    setDeviceError(undefined);
   }
 
   useEffect(() => {
@@ -103,12 +144,10 @@ export function App() {
         await loadDevices();
       } else {
         const error = body as { error?: { message?: string } } | undefined;
-        setFormError(
-          error?.error?.message ?? "The Bootstrap code could not be redeemed.",
-        );
+        setFormError(error?.error?.message ?? "Redeeming the Bootstrap code failed. Check the code and try again.");
       }
-    } catch {
-      setFormError("The application could not reach the server. Try again.");
+    } catch (cause) {
+      setFormError(operationFailure("Redeeming the Bootstrap code", cause));
     } finally {
       setSubmitting(false);
     }
@@ -116,62 +155,73 @@ export function App() {
 
   async function createEnrollmentGrant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    await createEnrollmentGrantFor(String(data.get("deviceName") ?? ""));
+  }
+
+  async function createEnrollmentGrantFor(deviceName: string) {
     setDeviceError(undefined);
     setEnrollmentGrant(undefined);
-    const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/v1/device-enrollment-grants", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deviceName: data.get("deviceName") }),
-    });
-    const body = await readJson(response);
-    if (!response.ok) {
-      const error = body as { error?: { message?: string } } | undefined;
-      setDeviceError(
-        error?.error?.message ?? "The enrollment grant could not be created.",
-      );
-      return;
+    try {
+      const body = await requestJson<{ grant: string }>("/api/v1/device-enrollment-grants", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deviceName }),
+      });
+      setEnrollmentGrant(body.grant);
+    } catch (cause) {
+      setDeviceError({
+        message: operationFailure("Creating an enrollment grant", cause),
+        retryLabel: "Try creating enrollment grant",
+        retry: () => createEnrollmentGrantFor(deviceName),
+      });
     }
-    setEnrollmentGrant((body as { grant: string }).grant);
   }
 
   async function createInvite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    await createInviteFor(Number(data.get("expiresInHours")));
+  }
+
+  async function createInviteFor(expiresInHours: number) {
     setInviteError(undefined);
     setInviteCode(undefined);
-    const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/v1/invites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ expiresInHours: Number(data.get("expiresInHours")) }),
-    });
-    const body = await readJson(response);
-    if (!response.ok) {
-      const error = body as { error?: { message?: string } } | undefined;
-      setInviteError(error?.error?.message ?? "The Invite code could not be created.");
-      return;
+    try {
+      const body = await requestJson<{ code: string }>("/api/v1/invites", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expiresInHours }),
+      });
+      setInviteCode(body.code);
+    } catch (cause) {
+      setInviteError({
+        message: operationFailure("Creating an Invite code", cause),
+        retryLabel: "Try creating Invite code",
+        retry: () => createInviteFor(expiresInHours),
+      });
     }
-    setInviteCode((body as { code: string }).code);
   }
 
   async function importExamplePack() {
     setExamplePackStatus("Importing the versioned starter pack…");
-    const response = await fetch(
-      "/api/v1/administration/example-packs/starter-v1/import",
-      { method: "POST" },
-    );
-    const body = await readJson(response);
-    if (!response.ok) {
-      const error = body as { error?: { message?: string } } | undefined;
-      setExamplePackStatus(
-        error?.error?.message ?? "The Example data pack could not be imported.",
+    setExamplePackError(undefined);
+    try {
+      const result = await requestJson<{ imported: boolean; sessionIds: string[] }>(
+        "/api/v1/administration/example-packs/starter-v1/import",
+        { method: "POST" },
       );
-      return;
+      setExamplePackStatus(
+        `${result.imported ? "Imported" : "Already imported"} starter-v1: ${result.sessionIds.join(", ")}. Every record is permanently labelled Seeded/Example.`,
+      );
+    } catch (cause) {
+      setExamplePackStatus(undefined);
+      setExamplePackError({
+        message: operationFailure("Importing the Example data pack", cause),
+        retryLabel: "Try importing starter-v1",
+        retry: importExamplePack,
+      });
     }
-    const result = body as { imported: boolean; sessionIds: string[] };
-    setExamplePackStatus(
-      `${result.imported ? "Imported" : "Already imported"} starter-v1: ${result.sessionIds.join(", ")}. Every record is permanently labelled Seeded/Example.`,
-    );
   }
 
   async function redeemInvite(event: FormEvent<HTMLFormElement>) {
@@ -191,13 +241,13 @@ export function App() {
       const body = await readJson(response);
       if (!response.ok) {
         const error = body as { error?: { message?: string } } | undefined;
-        setFormError(error?.error?.message ?? "The Invite code could not be redeemed.");
+        setFormError(error?.error?.message ?? "Redeeming the Invite code failed. Check the code and try again.");
         return;
       }
       setView({ kind: "session", session: body as AuthenticatedSessionResponse });
       await loadDevices();
-    } catch {
-      setFormError("The application could not reach the server. Try again.");
+    } catch (cause) {
+      setFormError(operationFailure("Redeeming the Invite code", cause));
     } finally {
       setSubmitting(false);
     }
@@ -207,6 +257,7 @@ export function App() {
     deviceId: string,
     change: Partial<Pick<CapturePolicy, "ordinaryRedactionEnabled" | "demoCanaryEnabled">>,
   ) {
+    const previousPolicy = devices.find((device) => device.id === deviceId)?.capturePolicy;
     setDevices((current) =>
       current.map((device) =>
         device.id === deviceId
@@ -217,33 +268,41 @@ export function App() {
           : device,
       ),
     );
-    const response = await fetch(`/api/v1/devices/${deviceId}/capture-policy`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(change),
-    });
-    if (!response.ok) {
-      setDeviceError("The capture policy could not be updated.");
-      await loadDevices();
-      return;
-    }
-    const capturePolicy = (await response.json()) as CapturePolicy;
-    setDevices((current) =>
-      current.map((device) =>
+    try {
+      const capturePolicy = await requestJson<CapturePolicy>(`/api/v1/devices/${deviceId}/capture-policy`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(change),
+      });
+      setDevices((current) => current.map((device) =>
         device.id === deviceId ? { ...device, capturePolicy } : device,
-      ),
-    );
+      ));
+      setDeviceError(undefined);
+    } catch (cause) {
+      if (previousPolicy) {
+        setDevices((current) => current.map((device) =>
+          device.id === deviceId ? { ...device, capturePolicy: previousPolicy } : device,
+        ));
+      }
+      setDeviceError({
+        message: operationFailure("Updating the capture policy", cause),
+        retryLabel: "Try updating capture policy",
+        retry: () => updatePolicy(deviceId, change),
+      });
+    }
   }
 
   async function revokeDevice(deviceId: string) {
-    const response = await fetch(`/api/v1/devices/${deviceId}/revoke`, {
-      method: "POST",
-    });
-    if (!response.ok) {
-      setDeviceError("The Device credential could not be revoked.");
-      return;
+    try {
+      await requestJson(`/api/v1/devices/${deviceId}/revoke`, { method: "POST" });
+      await loadDevices();
+    } catch (cause) {
+      setDeviceError({
+        message: operationFailure("Revoking the Device credential", cause),
+        retryLabel: "Try revoking Device credential",
+        retry: () => revokeDevice(deviceId),
+      });
     }
-    await loadDevices();
   }
 
   async function logout() {
@@ -357,7 +416,7 @@ export function App() {
                   <p>Share it out of band. Redemption always creates a Member, never an Administrator.</p>
                 </div>
               )}
-              {inviteError && <p role="alert" className="error">{inviteError}</p>}
+              {inviteError && <RetryAlert notice={inviteError} />}
               <div className="grant-panel">
                 <span className="detail-label">Explicit Example data</span>
                 <p>
@@ -368,7 +427,8 @@ export function App() {
                 <button type="button" onClick={() => void importExamplePack()}>
                   Import starter-v1 Example pack
                 </button>
-                {examplePackStatus && <output>{examplePackStatus}</output>}
+                {examplePackStatus && <output role="status">{examplePackStatus}</output>}
+                {examplePackError && <RetryAlert notice={examplePackError} />}
               </div>
             </section>
           )}
@@ -393,7 +453,7 @@ export function App() {
                 </p>
               </div>
             )}
-            {deviceError && <p role="alert" className="error">{deviceError}</p>}
+            {deviceError && <RetryAlert notice={deviceError} />}
             <div className="device-list">
               {devices.map((device) => (
                 <article className="device" key={device.id}>
@@ -482,6 +542,7 @@ export function App() {
         <section className="card" role="alert">
           <h1>Unable to start</h1>
           <p className="error">{view.message}</p>
+          <button type="button" onClick={() => window.location.reload()}>Try starting Loupe again</button>
         </section>
       )}
     </main>

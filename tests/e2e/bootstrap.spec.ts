@@ -110,8 +110,9 @@ test("an operator redeems Bootstrap and inspects a live resumable Session", asyn
     page.getByRole("region", { name: "Evidence inspector" }),
   ).toContainText("Unresolved parent");
   await expect(
-    page.getByRole("treeitem", { name: /Subagent run, Unresolved parent/i }),
-  ).toHaveAttribute("aria-selected", "true");
+    page.getByRole("list", { name: "Agent run hierarchy" })
+      .getByRole("button", { name: /Subagent run.*Unresolved parent/i }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByRole("region", { name: "Linear execution timeline" }),
   ).toContainText("Provenance");

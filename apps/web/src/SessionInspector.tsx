@@ -27,6 +27,11 @@ import {
 
 type LiveStatus = "connecting" | "connected" | "interrupted";
 type Evidence = AgentRun["identityEvidence"];
+type MutationError = {
+  message: string;
+  retryLabel: string;
+  retry: () => void | Promise<void>;
+};
 
 function words(value: string) {
   return value.replaceAll("_", " ");
@@ -81,10 +86,25 @@ function json(value: unknown) {
   return value === null ? "Unavailable from captured evidence" : JSON.stringify(value, null, 2);
 }
 
-function containsRedaction(value: unknown): boolean {
-  if (typeof value === "string") return value.toLowerCase().includes("redact");
-  if (Array.isArray(value)) return value.some(containsRedaction);
-  if (value && typeof value === "object") return Object.values(value).some(containsRedaction);
+function operationFailure(operation: string, cause: unknown) {
+  const reason = cause instanceof Error ? cause.message : "The request did not complete.";
+  return `${operation} failed. ${reason} Check the connection and try again.`;
+}
+
+const relayRedactionPlaceholders = [
+  "[REDACTED:openai_api_key]",
+  "[REDACTED:github_personal_access_token]",
+  "[REDACTED:demo_canary]",
+] as const;
+
+function containsRelayRedactionPlaceholder(value: unknown): boolean {
+  if (typeof value === "string") {
+    return relayRedactionPlaceholders.some((placeholder) => value.includes(placeholder));
+  }
+  if (Array.isArray(value)) return value.some(containsRelayRedactionPlaceholder);
+  if (value && typeof value === "object") {
+    return Object.values(value).some(containsRelayRedactionPlaceholder);
+  }
   return false;
 }
 
@@ -280,34 +300,46 @@ function AgentTree({
   target: InvestigationTarget;
   onTarget: (target: InvestigationTarget) => void;
 }) {
+  const agentsById = new Map(detail.agentRuns.map((agent) => [agent.id, agent]));
+  const childrenByParent = new Map<string, AgentRun[]>();
+  const nestedAgentIds = new Set<string>();
+  for (const agent of detail.agentRuns) {
+    const parentId = agent.parentEdge?.parentAgentRunId;
+    if (!parentId || !agentsById.has(parentId) || agent.parentEdge?.status === "unresolved") continue;
+    childrenByParent.set(parentId, [...(childrenByParent.get(parentId) ?? []), agent]);
+    nestedAgentIds.add(agent.id);
+  }
+  const topLevelAgents = detail.agentRuns.filter((agent) => !nestedAgentIds.has(agent.id));
+
+  const agentItem = (agent: AgentRun): ReactNode => {
+    const selected = target.kind === "agent" && target.id === agent.id;
+    const runLabel = agent.kind === "root" ? "Root agent run" : "Subagent run";
+    const children = childrenByParent.get(agent.id) ?? [];
+    return (
+      <li key={agent.id}>
+        <button
+          aria-label={`${runLabel}, ${agent.agentType ?? shortId(agent.id)}, ${parentLabel(agent)}`}
+          aria-pressed={selected}
+          onClick={() => onTarget({ kind: "agent", id: agent.id })}
+          type="button"
+        >
+          <span>{runLabel}</span>
+          <strong>{agent.agentType ?? shortId(agent.id)}</strong>
+          <small>{parentLabel(agent)}</small>
+          <EvidenceMark evidence={agent.identityEvidence} />
+        </button>
+        {children.length > 0 && <ul>{children.map(agentItem)}</ul>}
+      </li>
+    );
+  };
+
   return (
     <section className="linear-agent-tree" aria-labelledby="linear-tree-title">
       <header>
         <span className="section-code">Non-spatial fallback</span>
         <h3 id="linear-tree-title">Agent hierarchy</h3>
       </header>
-      <ul role="tree" aria-label="Agent run hierarchy">
-        {detail.agentRuns.map((agent) => {
-          const selected = target.kind === "agent" && target.id === agent.id;
-          const runLabel = agent.kind === "root" ? "Root agent run" : "Subagent run";
-          return (
-            <li
-              aria-label={`${runLabel}, ${parentLabel(agent)}`}
-              aria-level={agent.kind === "root" ? 1 : 2}
-              aria-selected={selected}
-              key={agent.id}
-              role="treeitem"
-            >
-              <button onClick={() => onTarget({ kind: "agent", id: agent.id })} type="button">
-                <span>{runLabel}</span>
-                <strong>{agent.agentType ?? shortId(agent.id)}</strong>
-                <small>{parentLabel(agent)}</small>
-                <EvidenceMark evidence={agent.identityEvidence} />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <ul aria-label="Agent run hierarchy">{topLevelAgents.map(agentItem)}</ul>
     </section>
   );
 }
@@ -396,7 +428,7 @@ function EvidenceInspector({
               <Fact label="Approval">{title(tool.approval)}</Fact>
               <Fact label="Turn association">{title(tool.turnAssociation.strength)}</Fact>
             </dl>
-            {(containsRedaction(tool.input) || containsRedaction(tool.result)) && (
+            {(containsRelayRedactionPlaceholder(tool.input) || containsRelayRedactionPlaceholder(tool.result)) && (
               <p className="redaction-label">Redacted content · capture policy preserved the evidence boundary</p>
             )}
             <section className="evidence-payload"><h3>Input</h3><pre>{json(tool.input)}</pre></section>
@@ -466,8 +498,13 @@ function EvidenceInspector({
         <ProvenanceFootnote evidence={evidence} label="Evidence provenance" />
       </div>
       <footer className="context-meter">
-        <div><span>Context occupancy</span><strong>{occupancy?.occupancyPercent == null ? "Unavailable" : `${occupancy.occupancyPercent.toFixed(1)}%`}</strong></div>
-        <meter max="100" min="0" value={occupancy?.occupancyPercent ?? 0} />
+        <div aria-label={occupancy?.occupancyPercent == null ? "Context occupancy unavailable" : undefined}>
+          <span>Context occupancy</span>
+          <strong>{occupancy?.occupancyPercent == null ? "Unavailable" : `${occupancy.occupancyPercent.toFixed(1)}%`}</strong>
+        </div>
+        {occupancy?.occupancyPercent != null && (
+          <meter aria-label={`Context occupancy ${occupancy.occupancyPercent.toFixed(1)}%`} max="100" min="0" value={occupancy.occupancyPercent} />
+        )}
         <small>{detail.evidence.context.contribution.status === "unavailable" ? "Per-item contribution unavailable" : "Contribution estimated; inspect provenance"}</small>
       </footer>
     </aside>
@@ -566,15 +603,16 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const [mutationError, setMutationError] = useState<MutationError>();
   const selectedSessionId = useRef(parameters.get("session") ?? undefined);
   const searchRef = useRef<HTMLInputElement>(null);
   const inspectorHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const openSession = useCallback(async (sessionId: string) => {
+    const sameSession = selectedSessionId.current === sessionId;
+    selectedSessionId.current = sessionId;
     try {
       const next = await fetchJson<ExecutionSessionDetail>(`/api/v1/sessions/${encodeURIComponent(sessionId)}`);
-      const sameSession = selectedSessionId.current === sessionId;
-      selectedSessionId.current = sessionId;
       setDetail(next);
       setTarget((current) => sameSession && current ? current : { kind: "session", id: sessionId });
       setCursor(100);
@@ -584,8 +622,10 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
       else url.searchParams.delete("includeSeeded");
       window.history.replaceState(null, "", url);
       setError(undefined);
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The Session could not be opened.");
+      return false;
     }
   }, [includeSeeded]);
 
@@ -598,13 +638,14 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
       setActivity(next);
       const requested = selectedSessionId.current ?? fallbackSessionId;
       const sessionId = requested && next.items.some(({ id }) => id === requested) ? requested : next.items[0]?.id;
-      if (sessionId) await openSession(sessionId);
-      else {
+      if (sessionId) {
+        await openSession(sessionId);
+      } else {
         selectedSessionId.current = undefined;
         setDetail(undefined);
         setTarget(undefined);
+        setError(undefined);
       }
-      setError(undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Organization activity could not be loaded.");
     } finally {
@@ -650,8 +691,8 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const element = event.target as HTMLElement;
-      const editing = element.matches("input, textarea, select, [contenteditable='true']");
-      if (editing) return;
+      const interactive = element.closest("input, textarea, select, button, a, summary, [contenteditable='true'], [role='tree'], [role='treeitem']");
+      if (interactive) return;
       if (event.key === "/") {
         event.preventDefault();
         searchRef.current?.focus();
@@ -687,44 +728,65 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
   }, [detail?.session.id]);
 
   const activeTarget = target ?? (detail ? { kind: "session" as const, id: detail.session.id } : undefined);
-  const totalTokens = detail?.evidence.tokenUsage.reduce((sum, sample) => sum + (sample.categories.total ?? 0), 0) ?? 0;
+  const tokenTotals = detail?.evidence.tokenUsage.map((sample) => sample.categories.total) ?? [];
+  const totalTokens = tokenTotals.length > 0 && tokenTotals.every((value): value is number => value !== null)
+    ? tokenTotals.reduce((sum, value) => sum + value, 0)
+    : null;
 
   async function annotate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!detail) return;
     const data = new FormData(event.currentTarget);
+    await saveAnnotation(detail.session.id, {
+      outcome: data.get("outcome"),
+      reviewStatus: data.get("reviewStatus"),
+      tags: String(data.get("tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
+    });
+  }
+
+  async function saveAnnotation(sessionId: string, annotation: Record<string, unknown>) {
     try {
-      await fetchJson(`/api/v1/sessions/${encodeURIComponent(detail.session.id)}/annotations`, {
+      await fetchJson(`/api/v1/sessions/${encodeURIComponent(sessionId)}/annotations`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          outcome: data.get("outcome"),
-          reviewStatus: data.get("reviewStatus"),
-          tags: String(data.get("tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
-        }),
+        body: JSON.stringify(annotation),
       });
-      await refresh(detail.session.id);
+      await refresh(sessionId);
+      setMutationError(undefined);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The annotation could not be saved.");
+      setMutationError({
+        message: operationFailure("Saving the Session annotation", cause),
+        retryLabel: "Try saving annotation",
+        retry: () => saveAnnotation(sessionId, annotation),
+      });
     }
   }
 
   async function compare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await runComparison({
+      selections: comparisonIds.map((sessionId) => ({ scope: "session" as const, sessionId })),
+      filters: submittedQuery ? { q: submittedQuery } : {},
+      includeSeeded,
+      claim: { kind: comparisonKind, statement: comparisonClaim },
+    });
+  }
+
+  async function runComparison(request: Record<string, unknown>) {
     try {
       setComparison(await fetchJson<ComparisonResponse>("/api/v1/comparisons", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          selections: comparisonIds.map((sessionId) => ({ scope: "session", sessionId })),
-          filters: submittedQuery ? { q: submittedQuery } : {},
-          includeSeeded,
-          claim: { kind: comparisonKind, statement: comparisonClaim },
-        }),
+        body: JSON.stringify(request),
       }));
+      setMutationError(undefined);
       setError(undefined);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The comparison could not be completed.");
+      setMutationError({
+        message: operationFailure("Running the evidence comparison", cause),
+        retryLabel: "Try comparison again",
+        retry: () => runComparison(request),
+      });
     }
   }
 
@@ -755,6 +817,7 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
       </form>
 
       {error && <div className="error-banner" role="alert"><strong>Evidence request failed</strong><span>{error}</span><button onClick={() => void refresh()} type="button">Try again</button></div>}
+      {mutationError && <div className="error-banner" role="alert"><strong>Evidence update failed</strong><span>{mutationError.message}</span><button onClick={() => void mutationError.retry()} type="button">{mutationError.retryLabel}</button></div>}
       {loading && <p className="loading-state" role="status">Reading captured Organization evidence…</p>}
 
       <div className="investigation-grid">
@@ -769,7 +832,7 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
         <section className="map-stage" aria-labelledby="execution-topology-title">
           <header className="map-heading">
             <div><span className="section-code">Execution graph</span><h2 id="execution-topology-title">Execution topology</h2><p>Where did the run bend?</p></div>
-            <div className="map-summary"><span><b>{detail?.agentRuns.length ?? 0}</b> routes</span><span><b>{detail?.evidence.tools.length ?? 0}</b> tools</span><span><b>{totalTokens.toLocaleString()}</b> tokens</span></div>
+            <div className="map-summary"><span><b>{detail?.agentRuns.length ?? 0}</b> routes</span><span><b>{detail?.evidence.tools.length ?? 0}</b> tools</span><span><b>{totalTokens?.toLocaleString() ?? "Unavailable"}</b> tokens</span></div>
           </header>
           {detail && (
             <div className="episode-tape" aria-label="Activity episodes">
