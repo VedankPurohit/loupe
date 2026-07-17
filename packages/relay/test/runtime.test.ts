@@ -22,6 +22,7 @@ describe("relay capture runtime", () => {
     const secret = `sk-${"S".repeat(40)}`;
     await writeFile(join(stateDir, "setup-state.json"), JSON.stringify({
       version: 1,
+      codexVersion: "0.144.5",
       stateDir,
       serverUrl: "http://127.0.0.1:3000",
       credential: "device_test",
@@ -43,6 +44,36 @@ describe("relay capture runtime", () => {
       prompt: "use [REDACTED:openai_api_key]",
     });
     expect(item?.event.redaction.applied).toBe(true);
+    expect(item?.event.producer).toMatchObject({ name: "codex", version: "0.144.5" });
+    expect(item?.event.adapter.status).not.toBe("downgraded");
+    queue.close();
+  });
+
+  it("stamps the real detected Codex version and downgrades unknown producers honestly", async () => {
+    const stateDir = join(tmpdir(), `relay-runtime-${randomUUID()}`);
+    roots.push(stateDir);
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "setup-state.json"), JSON.stringify({
+      version: 1,
+      codexVersion: "0.139.0",
+      stateDir,
+      serverUrl: "http://127.0.0.1:3000",
+      credential: "device_test",
+      fingerprintKey: Buffer.alloc(32, 7).toString("base64url"),
+      policy: { version: 1, ordinaryRedactionEnabled: true, demoCanaryEnabled: false },
+    }));
+
+    const id = await recordCodexPayload({
+      stateDir,
+      source: "codex_hook",
+      producerEvent: "UserPromptSubmit",
+      payload: { session_id: "session-v", turn_id: "turn-v", prompt: "hello" },
+    });
+    const queue = openDeliveryQueue({ databasePath: join(stateDir, "relay.sqlite") });
+    const item = queue.pending().find(({ event }) => event.id === id);
+    expect(item?.event.producer).toMatchObject({ name: "codex", version: "0.139.0" });
+    expect(item?.event.adapter.status).toBe("downgraded");
+    expect(item?.event.rawPayload).toMatchObject({ session_id: "session-v" });
     queue.close();
   });
 
@@ -52,6 +83,7 @@ describe("relay capture runtime", () => {
     await mkdir(stateDir, { recursive: true });
     await writeFile(join(stateDir, "setup-state.json"), JSON.stringify({
       version: 1,
+      codexVersion: "0.144.5",
       stateDir,
       serverUrl: "http://127.0.0.1:3000",
       credential: "device_test",

@@ -50,7 +50,9 @@ export async function recordCodexPayload(options: {
   );
   const adapted = adaptCodexObservation({
     source: options.source,
-    producer: { name: "codex", version: "0.144.5" },
+    // The real detected producer version; "unknown" downgrades honestly
+    // instead of fabricating validated 0.144.5 fidelity.
+    producer: { name: "codex", version: state.codexVersion ?? "unknown" },
     producerEvent: options.producerEvent,
     occurredAt: options.occurredAt ?? now,
     capturedAt: now,

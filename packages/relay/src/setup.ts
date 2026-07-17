@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { promisify } from "node:util";
 import {
   chmod,
   mkdir,
@@ -62,6 +64,8 @@ export interface MacosSetupPreview {
 
 export interface SetupState {
   version: 1;
+  /** Actual installed Codex CLI version, or "unknown" when undetectable. */
+  codexVersion?: string;
   codexHome: string;
   stateDir: string;
   serverUrl: string;
@@ -224,11 +228,34 @@ async function writePrivate(path: string, content: string): Promise<void> {
   await chmod(path, 0o600);
 }
 
+const execFileAsync = promisify(execFile);
+
+/**
+ * Detects the installed Codex CLI version so captured evidence carries the
+ * real producer version instead of an assumed one. Returns "unknown" when the
+ * binary is missing or its output is unrecognizable; the adapter then
+ * downgrades rather than fabricating validated fidelity.
+ */
+export async function detectCodexCliVersion(options?: {
+  codexPath?: string;
+}): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(options?.codexPath ?? "codex", ["--version"], {
+      timeout: 10_000,
+    });
+    const match = stdout.match(/codex-cli\s+(\d+\.\d+\.\d+\S*)/);
+    return match?.[1] ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function applyMacosSetup(options: {
   preview: MacosSetupPreview;
   enrollment: { credential: string; deviceId: string };
   serviceManager: RelayServiceManager;
   verifyDelivery: () => Promise<boolean>;
+  codexVersion?: string;
 }): Promise<void> {
   const { preview } = options;
   const paths = [join(preview.codexHome, "config.toml"), join(preview.codexHome, "hooks.json")];
@@ -257,6 +284,7 @@ export async function applyMacosSetup(options: {
   };
   const state: SetupState = {
     version: 1,
+    codexVersion: options.codexVersion ?? (await detectCodexCliVersion()),
     codexHome: preview.codexHome,
     stateDir: preview.stateDir,
     serverUrl: preview.serverUrl,
