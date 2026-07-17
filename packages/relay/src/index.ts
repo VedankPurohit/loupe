@@ -261,6 +261,48 @@ const ordinaryRules: RedactionRule[] = [
     replacement: "[REDACTED:github_personal_access_token]",
     pattern: /(?<![A-Za-z0-9_])(?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{30,})(?![A-Za-z0-9_])/g,
   },
+  {
+    type: "access_key_id",
+    name: "aws_access_key_id_v1",
+    replacement: "[REDACTED:aws_access_key_id]",
+    pattern: /(?<![A-Z0-9])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Z0-9])/g,
+  },
+  {
+    type: "access_token",
+    name: "slack_token_v1",
+    replacement: "[REDACTED:slack_token]",
+    pattern: /(?<![A-Za-z0-9_-])xox[abprs]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9-])/g,
+  },
+  {
+    type: "api_key",
+    name: "google_api_key_v1",
+    replacement: "[REDACTED:google_api_key]",
+    pattern: /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
+  },
+  {
+    type: "api_key",
+    name: "stripe_secret_key_v1",
+    replacement: "[REDACTED:stripe_secret_key]",
+    pattern: /(?<![A-Za-z0-9_])(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}(?![A-Za-z0-9])/g,
+  },
+  {
+    type: "access_token",
+    name: "gitlab_personal_access_token_v1",
+    replacement: "[REDACTED:gitlab_personal_access_token]",
+    pattern: /(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g,
+  },
+  {
+    type: "access_token",
+    name: "npm_access_token_v1",
+    replacement: "[REDACTED:npm_access_token]",
+    pattern: /(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])/g,
+  },
+  {
+    type: "private_key",
+    name: "pem_private_key_block_v1",
+    replacement: "[REDACTED:pem_private_key]",
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+  },
 ];
 
 const demoRule: RedactionRule = {
