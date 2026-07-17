@@ -6,6 +6,8 @@ import type {
   EnrolledDevice,
 } from "@workspace/contracts";
 
+import { SessionInspector } from "./SessionInspector.js";
+
 type View =
   | { kind: "loading" }
   | { kind: "bootstrap" }
@@ -234,6 +236,8 @@ export function App() {
               your enrolled Macs below.
             </p>
           </section>
+
+          <SessionInspector />
 
           <section className="card settings-card" aria-labelledby="devices-title">
             <p className="eyebrow">Capture Settings</p>

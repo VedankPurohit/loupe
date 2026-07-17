@@ -24,6 +24,9 @@ import {
   DeviceIdParamsSchema,
   DeviceHealthResponseSchema,
   EnrolledDevicesResponseSchema,
+  ExecutionSessionDetailResponseSchema,
+  ExecutionSessionIdParamsSchema,
+  ExecutionSessionsResponseSchema,
   HealthResponseSchema,
   RetainedSourceEventSchema,
   SourceEventBatchRequestSchema,
@@ -39,6 +42,7 @@ import {
   deviceCredentialSecuritySchemeName,
 } from "@workspace/contracts";
 
+import { ExecutionStore } from "./execution-store.js";
 import { IdentityError, IdentityStore } from "./identity-store.js";
 
 export interface BuildAppOptions {
@@ -51,6 +55,23 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   const identityStore = databaseUrl ? new IdentityStore(databaseUrl) : undefined;
+  const executionStore = databaseUrl ? new ExecutionStore(databaseUrl) : undefined;
+  let liveSequence = 0;
+  const liveClients = new Set<NodeJS.WritableStream>();
+
+  const publishSessionUpdates = (sessionIds: string[]) => {
+    const occurredAt = new Date().toISOString();
+    for (const sessionId of sessionIds) {
+      const event = {
+        sequence: ++liveSequence,
+        type: "session.updated" as const,
+        sessionId,
+        occurredAt,
+      };
+      const encoded = `id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+      for (const client of liveClients) client.write(encoded);
+    }
+  };
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -453,6 +474,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
+      if (results.some(({ status }) => status === "accepted" || status === "duplicate")) {
+        const sessionIds = await executionStore!.projectForDevice(device.id);
+        publishSessionUpdates(sessionIds);
+      }
       return { batchId: request.body.batchId, results };
     },
   );
@@ -670,12 +695,161 @@ export async function buildApp(options: BuildAppOptions = {}) {
     "/api/v1/sessions",
     {
       schema: {
-        operationId: "denyDeviceSessionBrowsing",
-        security: deviceCredentialOpenApiSecurity,
-        response: { 401: ApiErrorSchema, 403: ApiErrorSchema, 503: ApiErrorSchema },
+        operationId: "listExecutionSessions",
+        security: browserSessionOpenApiSecurity,
+        response: {
+          200: ExecutionSessionsResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
       },
     },
-    forbiddenDeviceCapability,
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed execution history is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token
+        ? await identityStore.getSession(token)
+        : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return { sessions: await executionStore.listSessions(browserSession.organization.id) };
+    },
+  );
+  app.get(
+    "/api/v1/sessions/:id",
+    {
+      schema: {
+        operationId: "getExecutionSession",
+        security: browserSessionOpenApiSecurity,
+        params: ExecutionSessionIdParamsSchema,
+        response: {
+          200: ExecutionSessionDetailResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed execution history is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token
+        ? await identityStore.getSession(token)
+        : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const detail = await executionStore.getSession(
+        browserSession.organization.id,
+        request.params.id,
+      );
+      if (!detail) {
+        return reply.status(404).send({
+          error: {
+            code: "EXECUTION_SESSION_NOT_FOUND",
+            message: "The Session was not found.",
+          },
+        });
+      }
+      return detail;
+    },
+  );
+  app.get(
+    "/api/v1/live",
+    {
+      schema: {
+        operationId: "watchExecutionSessions",
+        security: browserSessionOpenApiSecurity,
+        response: { 401: ApiErrorSchema, 503: ApiErrorSchema },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed execution history is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token
+        ? await identityStore.getSession(token)
+        : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      reply.raw.write("retry: 1000\n\n");
+      liveClients.add(reply.raw);
+      request.raw.once("close", () => liveClients.delete(reply.raw));
+    },
   );
   app.post(
     "/api/v1/candidates",
@@ -843,8 +1017,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
     });
   });
 
-  if (identityStore) {
-    app.addHook("onClose", async () => identityStore.close());
+  if (identityStore && executionStore) {
+    app.addHook("onClose", async () => {
+      for (const client of liveClients) client.end();
+      liveClients.clear();
+      await Promise.all([identityStore.close(), executionStore.close()]);
+    });
   }
   await app.ready();
   if (identityStore) {

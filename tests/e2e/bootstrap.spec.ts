@@ -1,4 +1,8 @@
+import { randomUUID } from "node:crypto";
+
 import { expect, test } from "@playwright/test";
+
+import { loadInspectorFixture } from "./session-fixture.js";
 
 test("an operator can retry when Bootstrap redemption cannot reach the server", async ({
   page,
@@ -23,8 +27,9 @@ test("an operator can retry when Bootstrap redemption cannot reach the server", 
   ).toBeEnabled();
 });
 
-test("an operator redeems the Bootstrap code and becomes the Administrator", async ({
+test("an operator redeems Bootstrap and inspects a live resumable Session", async ({
   page,
+  request,
 }) => {
   await page.goto("/");
 
@@ -58,6 +63,7 @@ test("an operator redeems the Bootstrap code and becomes the Administrator", asy
     { data: { grant } },
   );
   expect(enrollment.status()).toBe(201);
+  const { credential } = (await enrollment.json()) as { credential: string };
 
   await page.reload();
   await expect(
@@ -72,4 +78,40 @@ test("an operator redeems the Bootstrap code and becomes the Administrator", asy
 
   await page.getByLabel("Demo redaction canary").check();
   await expect(page.getByText("Policy version 2", { exact: true })).toBeVisible();
+
+  const fixture = await loadInspectorFixture();
+  const deliver = (events: typeof fixture.initial) =>
+    request.post("/api/v1/device/source-event-batches", {
+      headers: { authorization: `Bearer ${credential}` },
+      data: { batchId: randomUUID(), events },
+    });
+
+  expect((await deliver(fixture.initial)).status()).toBe(200);
+  await page.reload();
+
+  await expect(
+    page.getByRole("heading", { name: "Session inspector" }),
+  ).toBeVisible();
+  await expect(page.getByText("session-probe-001", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Root agent run", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Subagent run", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Unresolved parent", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("turn-probe-006", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Documented, observed · exact", { exact: true }).first()).toBeVisible();
+
+  expect((await deliver(fixture.live)).status()).toBe(200);
+  await expect(page.getByText("Resume", { exact: true }).last()).toBeVisible();
+
+  await page.route("**/api/v1/live", (route) => route.abort("connectionrefused"));
+  await page.reload();
+  await expect(page.getByRole("status", { name: "Live updates" })).toContainText(
+    "interrupted",
+  );
+  expect((await deliver(fixture.afterDisconnect)).status()).toBe(200);
+  await page.unroute("**/api/v1/live");
+
+  await expect(page.getByText("turn-probe-008", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("status", { name: "Live updates" })).toContainText(
+    "connected",
+  );
 });

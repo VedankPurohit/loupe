@@ -1,0 +1,23 @@
+{
+  "name": "@workspace/diagnostic-cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "loupe-diagnostic": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "diagnostic": "node dist/cli.js",
+    "pretest": "pnpm --filter @workspace/contracts build && pnpm run build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@workspace/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.15",
+    "tsx": "4.20.3",
+    "vitest": "3.2.4"
+  }
+}

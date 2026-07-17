@@ -215,3 +215,133 @@ export const sourceEvents = pgTable(
     index("source_events_device_idx").on(table.deliveringDeviceId),
   ],
 );
+
+export const executionSessions = pgTable(
+  "execution_sessions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    canonicalSessionId: text("canonical_session_id").notNull(),
+    ownerMemberId: uuid("owner_member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    ownerDeviceId: uuid("owner_device_id")
+      .notNull()
+      .references(() => enrolledDevices.id, { onDelete: "restrict" }),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull(),
+    activityState: varchar("activity_state", { length: 16 }).notNull(),
+    rootAgentRunId: text("root_agent_run_id").notNull(),
+    projectionVersion: varchar("projection_version", { length: 32 }).notNull(),
+    ownershipReconciliation: jsonb("ownership_reconciliation").notNull(),
+  },
+  (table) => [
+    uniqueIndex("execution_sessions_org_canonical_unique").on(
+      table.organizationId,
+      table.canonicalSessionId,
+    ),
+    index("execution_sessions_org_last_observed_idx").on(
+      table.organizationId,
+      table.lastObservedAt,
+    ),
+  ],
+);
+
+export const activityEpisodes = pgTable(
+  "activity_episodes",
+  {
+    id: uuid("id").primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => executionSessions.id, { onDelete: "cascade" }),
+    publicId: text("public_id").notNull(),
+    source: varchar("source", { length: 16 }).notNull(),
+    state: varchar("state", { length: 16 }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    sourceEventId: uuid("source_event_id")
+      .notNull()
+      .references(() => sourceEvents.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    uniqueIndex("activity_episodes_session_public_unique").on(
+      table.sessionId,
+      table.publicId,
+    ),
+  ],
+);
+
+export const executionTurns = pgTable(
+  "execution_turns",
+  {
+    id: uuid("id").primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => executionSessions.id, { onDelete: "cascade" }),
+    canonicalTurnId: text("canonical_turn_id").notNull(),
+    agentRunId: text("agent_run_id").notNull(),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull(),
+    evidence: jsonb("evidence").notNull(),
+  },
+  (table) => [
+    uniqueIndex("execution_turns_session_canonical_unique").on(
+      table.sessionId,
+      table.canonicalTurnId,
+    ),
+  ],
+);
+
+export const executionAgentRuns = pgTable(
+  "execution_agent_runs",
+  {
+    id: uuid("id").primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => executionSessions.id, { onDelete: "cascade" }),
+    publicId: text("public_id").notNull(),
+    kind: varchar("kind", { length: 16 }).notNull(),
+    codexThreadId: text("codex_thread_id"),
+    agentType: text("agent_type"),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull(),
+    identityEvidence: jsonb("identity_evidence").notNull(),
+    parentStatus: varchar("parent_status", { length: 16 }),
+    parentAgentRunId: text("parent_agent_run_id"),
+    parentReconciliation: jsonb("parent_reconciliation"),
+  },
+  (table) => [
+    uniqueIndex("execution_agent_runs_session_public_unique").on(
+      table.sessionId,
+      table.publicId,
+    ),
+    index("execution_agent_runs_codex_thread_idx").on(table.codexThreadId),
+  ],
+);
+
+export const executionTimelineEvents = pgTable(
+  "execution_timeline_events",
+  {
+    id: uuid("id").primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => executionSessions.id, { onDelete: "cascade" }),
+    sourceEventId: uuid("source_event_id")
+      .notNull()
+      .references(() => sourceEvents.id, { onDelete: "restrict" }),
+    event: text("event").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    turnId: text("turn_id"),
+    agentRunId: text("agent_run_id"),
+    evidence: jsonb("evidence").notNull(),
+  },
+  (table) => [
+    uniqueIndex("execution_timeline_source_event_unique").on(table.sourceEventId),
+    index("execution_timeline_session_occurred_idx").on(
+      table.sessionId,
+      table.occurredAt,
+    ),
+  ],
+);

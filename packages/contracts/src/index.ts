@@ -197,6 +197,106 @@ export const RetainedSourceEventSchema = SourceEventSchema.extend({
   delivery: z.object({ deviceId: z.uuid(), batchId: z.uuid() }),
 });
 
+export const EvidenceSchema = z.object({
+  stability: z.array(
+    z.enum(["documented", "observed", "inferred", "unstable", "unavailable"]),
+  ),
+  derivation: z.enum(["exact", "inferred", "unavailable"]),
+  sourceEventIds: z.array(z.uuid()),
+});
+
+export const ReconciliationInputSchema = z.object({
+  sourceEventId: z.uuid(),
+  source: z.string().min(1),
+  observedValue: z.string().nullable(),
+  stability: z.enum(["documented", "observed", "unstable"]),
+  derivation: z.enum(["exact", "inferred"]),
+  confidence: z.enum(["high", "medium", "low"]),
+});
+
+export const ReconciliationSchema = z.object({
+  inputs: z.array(ReconciliationInputSchema),
+  rule: z.string().min(1),
+  selectedValue: z.string().nullable(),
+  confidence: z.enum(["high", "medium", "low", "none"]),
+});
+
+export const ActivityEpisodeSchema = z.object({
+  id: z.string().min(1),
+  source: z.enum(["startup", "resume", "clear", "compact", "observed"]),
+  state: z.enum(["live", "idle", "resumed"]),
+  startedAt: z.iso.datetime(),
+  endedAt: z.iso.datetime().nullable(),
+  sourceEventId: z.uuid(),
+});
+
+export const TurnSchema = z.object({
+  id: z.string().min(1),
+  agentRunId: z.string().min(1),
+  firstObservedAt: z.iso.datetime(),
+  lastObservedAt: z.iso.datetime(),
+  evidence: EvidenceSchema,
+});
+
+export const ParentEdgeSchema = z.object({
+  status: z.enum(["exact", "inferred", "unresolved"]),
+  parentAgentRunId: z.string().nullable(),
+  reconciliation: ReconciliationSchema,
+});
+
+export const AgentRunSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["root", "subagent"]),
+  codexThreadId: z.string().nullable(),
+  agentType: z.string().nullable(),
+  firstObservedAt: z.iso.datetime(),
+  lastObservedAt: z.iso.datetime(),
+  identityEvidence: EvidenceSchema,
+  parentEdge: ParentEdgeSchema.nullable(),
+});
+
+export const ExecutionSessionSchema = z.object({
+  id: z.string().min(1),
+  owner: z.object({ memberId: z.uuid(), deviceId: z.uuid() }),
+  firstObservedAt: z.iso.datetime(),
+  lastObservedAt: z.iso.datetime(),
+  activityState: z.enum(["live", "idle", "resumed"]),
+  completion: z.object({
+    status: z.literal("not_assumed"),
+    evidence: z.literal("unavailable"),
+  }),
+  rootAgentRunId: z.string().min(1),
+  projectionVersion: z.literal("1"),
+  ownershipReconciliation: ReconciliationSchema,
+});
+
+export const ExecutionSessionsResponseSchema = z.object({
+  sessions: z.array(ExecutionSessionSchema),
+});
+export const ExecutionSessionIdParamsSchema = z.object({ id: z.string().min(1) });
+export const TimelineEventSchema = z.object({
+  sourceEventId: z.uuid(),
+  event: z.string().min(1),
+  occurredAt: z.iso.datetime(),
+  turnId: z.string().nullable(),
+  agentRunId: z.string().nullable(),
+  evidence: EvidenceSchema,
+});
+export const ExecutionSessionDetailResponseSchema = z.object({
+  session: ExecutionSessionSchema,
+  activities: z.array(ActivityEpisodeSchema),
+  turns: z.array(TurnSchema),
+  agentRuns: z.array(AgentRunSchema),
+  timeline: z.array(TimelineEventSchema),
+});
+
+export const LiveExecutionEventSchema = z.object({
+  sequence: z.number().int().positive(),
+  type: z.literal("session.updated"),
+  sessionId: z.string().min(1),
+  occurredAt: z.iso.datetime(),
+});
+
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type BootstrapRedeemRequest = z.infer<typeof BootstrapRedeemRequestSchema>;
@@ -227,3 +327,12 @@ export type SourceEventBatchResponse = z.infer<
   typeof SourceEventBatchResponseSchema
 >;
 export type RetainedSourceEvent = z.infer<typeof RetainedSourceEventSchema>;
+export type Reconciliation = z.infer<typeof ReconciliationSchema>;
+export type ActivityEpisode = z.infer<typeof ActivityEpisodeSchema>;
+export type Turn = z.infer<typeof TurnSchema>;
+export type AgentRun = z.infer<typeof AgentRunSchema>;
+export type ExecutionSession = z.infer<typeof ExecutionSessionSchema>;
+export type ExecutionSessionDetail = z.infer<
+  typeof ExecutionSessionDetailResponseSchema
+>;
+export type LiveExecutionEvent = z.infer<typeof LiveExecutionEventSchema>;

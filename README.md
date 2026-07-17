@@ -158,6 +158,7 @@ The Playwright harness owns a disposable `agent_observer_playwright` database, c
 - [`CONTEXT.md`](./CONTEXT.md) — the shared domain glossary.
 - [`docs/enrollment-and-redaction.md`](./docs/enrollment-and-redaction.md) — enrollment grants, credential scopes, device Settings, revocation, and ordinary/Demo redaction behavior.
 - [`docs/adapter-and-delivery.md`](./docs/adapter-and-delivery.md) — Codex adapter capabilities, immutable source-event envelopes, durable queueing, batch acknowledgements, retries, replay, and delivery troubleshooting.
+- [`docs/live-execution.md`](./docs/live-execution.md) — canonical Session/Turn/Agent identities, Activity episodes, replay and reconciliation, query contracts, SSE recovery, and parentage limits.
 - [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.
 - [Build-ready specification](./.scratch/coding-agent-observability/spec.md) — normative product, architecture, testing, and acceptance strategy.
 - [Implementation tickets](./.scratch/coding-agent-observability-implementation/issues/) — 16 typed, test-planned work packages with explicit blockers and documentation obligations.
