@@ -90,7 +90,10 @@ test("an operator redeems Bootstrap and inspects a live resumable Session", asyn
   await page.reload();
 
   await expect(
-    page.getByRole("heading", { name: "Session inspector" }),
+    page.getByRole("heading", { name: "Activity field" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Execution topology" }),
   ).toBeVisible();
   await expect(page.getByText("session-probe-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Root agent run", { exact: true }).first()).toBeVisible();
@@ -98,6 +101,20 @@ test("an operator redeems Bootstrap and inspects a live resumable Session", asyn
   await expect(page.getByText("Unresolved parent", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("turn-probe-006", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Documented, observed · exact", { exact: true }).first()).toBeVisible();
+
+  await page
+    .getByRole("button", { name: /Subagent run.*unresolved parent/i })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Evidence inspector" }),
+  ).toContainText("Unresolved parent");
+  await expect(
+    page.getByRole("treeitem", { name: /Subagent run, Unresolved parent/i }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("region", { name: "Linear execution timeline" }),
+  ).toContainText("Provenance");
 
   expect((await deliver(fixture.live)).status()).toBe(200);
   await expect(page.getByText("Resume", { exact: true }).last()).toBeVisible();

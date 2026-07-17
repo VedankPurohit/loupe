@@ -1,672 +1,848 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type {
   AgentRun,
   AuthenticatedSessionResponse,
   ComparisonResponse,
-  ExecutionSession,
   ExecutionSessionDetail,
   LiveExecutionEvent,
   OrganizationActivityResponse,
 } from "@workspace/contracts";
 
+import {
+  buildMapNodes,
+  firstFailedTool,
+  type InvestigationTarget,
+  targetMatches,
+  timePercent,
+} from "./investigation.js";
+
 type LiveStatus = "connecting" | "connected" | "interrupted";
+type Evidence = AgentRun["identityEvidence"];
 
-function formatDate(value: string | null) {
-  if (!value) return "Ongoing";
-  return new Date(value).toLocaleString();
+function words(value: string) {
+  return value.replaceAll("_", " ");
 }
 
-function label(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1).replaceAll("_", " ");
+function title(value: string) {
+  const text = words(value);
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function available(value: string | number | null) {
-  return value === null ? "Unavailable" : String(value);
+function clock(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
 }
 
-function jsonEvidence(value: unknown) {
-  return value === null ? "Unavailable" : JSON.stringify(value, null, 2);
+function shortId(value: string) {
+  return value.length > 22 ? `${value.slice(0, 10)}…${value.slice(-7)}` : value;
 }
 
-function EvidenceLabel({
-  evidence,
-}: {
-  evidence: AgentRun["identityEvidence"];
-}) {
-  const stability = evidence.stability
-    .map((value, index) => (index === 0 ? label(value) : value))
-    .join(", ");
+function evidenceText(evidence: Evidence) {
+  return `${evidence.stability.map((value, index) => index === 0 ? title(value) : value).join(", ")} · ${evidence.derivation}`;
+}
+
+function EvidenceMark({ evidence, compact = false }: { evidence: Evidence; compact?: boolean }) {
+  const text = evidenceText(evidence);
   return (
-    <span className={`evidence evidence-${evidence.derivation}`}>
-      {stability} · {evidence.derivation}
+    <span className={`fidelity fidelity-${evidence.derivation}`} title={text}>
+      <span aria-hidden="true" className="fidelity-dot" />
+      {compact ? <span className="sr-only">Evidence: {text}</span> : text}
     </span>
   );
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(path);
-  if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+function ProvenanceFootnote({ evidence, label = "Provenance" }: { evidence: Evidence; label?: string }) {
+  return (
+    <details className="provenance-footnote">
+      <summary>{label} · {evidence.derivation}</summary>
+      <p>{evidenceText(evidence)}.</p>
+      {evidence.sourceEventIds.length ? (
+        <ul>{evidence.sourceEventIds.map((id) => <li key={id}><code>{id}</code></li>)}</ul>
+      ) : (
+        <p>No source-event identifier is available for this derived view.</p>
+      )}
+    </details>
+  );
+}
+
+function json(value: unknown) {
+  return value === null ? "Unavailable from captured evidence" : JSON.stringify(value, null, 2);
+}
+
+function containsRedaction(value: unknown): boolean {
+  if (typeof value === "string") return value.toLowerCase().includes("redact");
+  if (Array.isArray(value)) return value.some(containsRedaction);
+  if (value && typeof value === "object") return Object.values(value).some(containsRedaction);
+  return false;
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => undefined)) as
+      | { error?: { message?: string } }
+      | undefined;
+    throw new Error(body?.error?.message ?? `Evidence request failed (${response.status}).`);
+  }
   return response.json() as Promise<T>;
 }
 
-function ParentEvidence({ agentRun }: { agentRun: AgentRun }) {
-  if (agentRun.kind === "root") {
-    return <span className="parent-edge parent-root">Root agent run</span>;
-  }
-  const edge = agentRun.parentEdge;
-  if (!edge) return null;
+function sessionRepository(session: OrganizationActivityResponse["items"][number]) {
+  return session.repository.remoteIdentity ?? session.repository.branch ?? "Repository unavailable";
+}
+
+function parentLabel(agent: AgentRun) {
+  if (agent.kind === "root") return "Root agent run";
+  if (!agent.parentEdge || agent.parentEdge.status === "unresolved") return "Unresolved parent";
+  return `${title(agent.parentEdge.status)} parent`;
+}
+
+function OrganizationRail({
+  activity,
+  selectedId,
+  selectedForComparison,
+  onOpen,
+  onToggleComparison,
+}: {
+  activity?: OrganizationActivityResponse;
+  selectedId?: string;
+  selectedForComparison: string[];
+  onOpen: (id: string) => void;
+  onToggleComparison: (id: string) => void;
+}) {
   return (
-    <div className="parent-evidence">
-      <span className={`parent-edge parent-${edge.status}`}>
-        {edge.status === "unresolved"
-          ? "Unresolved parent"
-          : `${label(edge.status)} parent`}
-      </span>
-      {edge.parentAgentRunId && <code>{edge.parentAgentRunId}</code>}
-      <small>
-        {edge.reconciliation.rule.replaceAll("_", " ")} · confidence {edge.reconciliation.confidence}
-      </small>
+    <aside className="organization-rail" aria-labelledby="activity-field-title">
+      <header className="rail-heading">
+        <div>
+          <span className="section-code">Organization / activity</span>
+          <h2 id="activity-field-title">Activity field</h2>
+        </div>
+        <strong>{activity?.page.total ?? "—"}</strong>
+      </header>
+      {activity && (
+        <div className="aggregate-tape" aria-label="Organization activity summary">
+          <span><b>{activity.aggregates.activityStates.live}</b> live</span>
+          <span><b>{activity.aggregates.outcomes.failed}</b> failed</span>
+          <span><b>{activity.aggregates.members}</b> members</span>
+        </div>
+      )}
+      <div className="session-stack">
+        {activity?.items.map((session) => (
+          <article className={`session-slip ${selectedId === session.id ? "is-selected" : ""}`} key={session.id}>
+            <button
+              aria-current={selectedId === session.id ? "page" : undefined}
+              className="session-open"
+              onClick={() => onOpen(session.id)}
+              type="button"
+            >
+              <span className={`activity-lamp state-${session.activityState}`} aria-hidden="true" />
+              <span>
+                <strong>{session.owner.displayName}</strong>
+                <small>{sessionRepository(session)}</small>
+                <code>{shortId(session.id)}</code>
+              </span>
+              <time dateTime={session.lastObservedAt}>{clock(session.lastObservedAt)}</time>
+            </button>
+            <footer>
+              <span>{title(session.annotations.outcome)}</span>
+              {session.synthetic.kind === "seeded" && <b className="seeded-label">Seeded</b>}
+              {session.owner.isExample && <b className="seeded-label">Example member</b>}
+              <label>
+                <input
+                  aria-label={`Compare ${session.id}`}
+                  checked={selectedForComparison.includes(session.id)}
+                  onChange={() => onToggleComparison(session.id)}
+                  type="checkbox"
+                />
+                Compare
+              </label>
+            </footer>
+          </article>
+        ))}
+      </div>
+      {activity?.items.length === 0 && (
+        <div className="rail-empty">
+          <strong>No Sessions match this evidence search.</strong>
+          <span>Clear the query or include Seeded examples.</span>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function ExecutionMap({
+  detail,
+  target,
+  cursor,
+  onTarget,
+}: {
+  detail: ExecutionSessionDetail;
+  target: InvestigationTarget;
+  cursor: number;
+  onTarget: (target: InvestigationTarget) => void;
+}) {
+  const lanes = detail.agentRuns;
+  const nodes = buildMapNodes(detail);
+  const yFor = (agentId: string) =>
+    112 + Math.max(0, lanes.findIndex(({ id }) => id === agentId)) * 126;
+  const height = Math.max(410, 220 + (lanes.length - 1) * 126);
+
+  return (
+    <div className="execution-viewport" aria-label="Spatial execution topology">
+      <div className="execution-canvas" style={{ height }}>
+        <div className="time-ruler" aria-hidden="true">
+          <span>Session start</span><span>25%</span><span>50%</span><span>75%</span><span>Latest</span>
+        </div>
+        <svg aria-hidden="true" className="tracks" preserveAspectRatio="none" viewBox={`0 0 1080 ${height}`}>
+          {lanes.map((lane) => {
+            const y = yFor(lane.id);
+            const start = lane.kind === "root" ? 178 : 178 + timePercent(lane.firstObservedAt, detail) * 7.7;
+            const parentY = lane.parentEdge?.parentAgentRunId
+              ? yFor(lane.parentEdge.parentAgentRunId)
+              : y;
+            return (
+              <g className={`track track-${lane.parentEdge?.status ?? "exact"}`} key={lane.id}>
+                {lane.kind === "subagent" && (
+                  <path d={`M ${start} ${parentY} C ${start + 34} ${parentY}, ${start - 34} ${y}, ${start} ${y}`} />
+                )}
+                <line x1={start} x2="1015" y1={y} y2={y} />
+              </g>
+            );
+          })}
+        </svg>
+
+        {lanes.map((lane) => {
+          const selected = target.kind === "agent" && target.id === lane.id;
+          const edge = parentLabel(lane);
+          const runLabel = lane.kind === "root" ? "Root agent run" : "Subagent run";
+          return (
+            <button
+              aria-label={`${runLabel}, ${lane.agentType ?? shortId(lane.id)}, ${edge}, ${lane.identityEvidence.derivation} evidence`}
+              aria-pressed={selected}
+              className={`lane-label ${selected ? "is-selected" : ""}`}
+              key={lane.id}
+              onClick={() => onTarget({ kind: "agent", id: lane.id })}
+              style={{ top: yFor(lane.id) - 34 }}
+              type="button"
+            >
+              <span>{runLabel}</span>
+              <strong>{lane.agentType ?? shortId(lane.id)}</strong>
+              <small>{edge}</small>
+            </button>
+          );
+        })}
+
+        {nodes.map((node) => {
+          const position = timePercent(node.occurredAt, detail);
+          const selected = target.kind === node.kind && target.id === node.id;
+          return (
+            <button
+              aria-label={`${title(node.kind)}: ${node.label}; ${node.evidence.derivation} evidence${node.outcome === "failure" ? "; failed" : ""}`}
+              aria-pressed={selected}
+              className={`map-node node-${node.kind} fidelity-border-${node.evidence.derivation} ${node.outcome === "failure" ? "node-failure" : ""} ${selected ? "is-selected" : ""} ${position > cursor ? "is-future" : ""}`}
+              key={`${node.kind}-${node.id}`}
+              onClick={() => onTarget({ kind: node.kind, id: node.id })}
+              style={{ left: `${18 + position * 0.76}%`, top: yFor(node.agentRunId) - 18 }}
+              title={`${clock(node.occurredAt)} · ${node.label}`}
+              type="button"
+            >
+              <i aria-hidden="true" />
+              <span>{node.label}</span>
+            </button>
+          );
+        })}
+        <div className="time-scanline" aria-hidden="true" style={{ left: `${18 + cursor * 0.76}%` }}>
+          <span>{Math.round(cursor)}%</span>
+        </div>
+      </div>
     </div>
   );
 }
 
-export function SessionInspector({
-  member,
+function AgentTree({
+  detail,
+  target,
+  onTarget,
 }: {
-  member: AuthenticatedSessionResponse["member"];
+  detail: ExecutionSessionDetail;
+  target: InvestigationTarget;
+  onTarget: (target: InvestigationTarget) => void;
 }) {
-  const [sessions, setSessions] = useState<ExecutionSession[]>([]);
+  return (
+    <section className="linear-agent-tree" aria-labelledby="linear-tree-title">
+      <header>
+        <span className="section-code">Non-spatial fallback</span>
+        <h3 id="linear-tree-title">Agent hierarchy</h3>
+      </header>
+      <ul role="tree" aria-label="Agent run hierarchy">
+        {detail.agentRuns.map((agent) => {
+          const selected = target.kind === "agent" && target.id === agent.id;
+          const runLabel = agent.kind === "root" ? "Root agent run" : "Subagent run";
+          return (
+            <li
+              aria-label={`${runLabel}, ${parentLabel(agent)}`}
+              aria-level={agent.kind === "root" ? 1 : 2}
+              aria-selected={selected}
+              key={agent.id}
+              role="treeitem"
+            >
+              <button onClick={() => onTarget({ kind: "agent", id: agent.id })} type="button">
+                <span>{runLabel}</span>
+                <strong>{agent.agentType ?? shortId(agent.id)}</strong>
+                <small>{parentLabel(agent)}</small>
+                <EvidenceMark evidence={agent.identityEvidence} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function LinearTimeline({
+  detail,
+  target,
+  onTarget,
+}: {
+  detail: ExecutionSessionDetail;
+  target: InvestigationTarget;
+  onTarget: (target: InvestigationTarget) => void;
+}) {
+  const nodes = buildMapNodes(detail);
+  return (
+    <section className="linear-timeline" aria-label="Linear execution timeline">
+      <header>
+        <span className="section-code">Chronological route</span>
+        <h3>Timeline and provenance</h3>
+      </header>
+      <ol>
+        {nodes.map((node) => {
+          const nodeTarget: InvestigationTarget = { kind: node.kind, id: node.id };
+          const selected = targetMatches(target, nodeTarget);
+          return (
+            <li className={selected ? "is-selected" : ""} key={`${node.kind}-${node.id}`}>
+              <button aria-current={selected ? "true" : undefined} onClick={() => onTarget(nodeTarget)} type="button">
+                <time dateTime={node.occurredAt}>{clock(node.occurredAt)}</time>
+                <span><b>{title(node.kind)}</b>{node.label}{node.turnId && <code>{node.turnId}</code>}</span>
+                {node.outcome === "failure" && <strong className="failure-label">Failed</strong>}
+                <EvidenceMark compact evidence={node.evidence} />
+              </button>
+              <ProvenanceFootnote evidence={node.evidence} />
+            </li>
+          );
+        })}
+      </ol>
+      {!nodes.length && <p className="empty-note">No chronological evidence is available for this Session.</p>}
+    </section>
+  );
+}
+
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return <div><dt>{label}</dt><dd>{children}</dd></div>;
+}
+
+function EvidenceInspector({
+  detail,
+  target,
+  headingRef,
+  onFailure,
+}: {
+  detail: ExecutionSessionDetail;
+  target: InvestigationTarget;
+  headingRef: React.RefObject<HTMLHeadingElement | null>;
+  onFailure: (focus?: boolean) => void;
+}) {
+  const tool = target.kind === "tool" ? detail.evidence.tools.find(({ id }) => id === target.id) : undefined;
+  const agent = target.kind === "agent" ? detail.agentRuns.find(({ id }) => id === target.id) : undefined;
+  const activity = target.kind === "activity" ? detail.timeline.find(({ sourceEventId }) => sourceEventId === target.id) : undefined;
+  const token = target.kind === "token" ? detail.evidence.tokenUsage.find(({ id }) => id === target.id) : undefined;
+  const evidence = tool?.evidence ?? agent?.identityEvidence ?? activity?.evidence ?? token?.evidence ?? {
+    stability: ["observed"] as const,
+    derivation: "exact" as const,
+    sourceEventIds: [],
+  };
+  const occupancy = detail.evidence.context.occupancy.at(-1);
+
+  return (
+    <aside className="evidence-inspector" aria-label="Evidence inspector" role="region">
+      <header className="inspector-bar">
+        <span>Evidence inspector</span>
+        <EvidenceMark compact evidence={evidence} />
+      </header>
+      <div className="inspector-body">
+        {tool && (
+          <>
+            <p className="eyebrow">{tool.outcome === "failure" ? "Failed Tool" : "Tool invocation"}</p>
+            <h2 ref={headingRef} tabIndex={-1}>{tool.toolName}</h2>
+            <code>{tool.id}</code>
+            <dl className="inspector-facts">
+              <Fact label="Outcome"><span className={tool.outcome === "failure" ? "ink-failure" : ""}>{title(tool.outcome)}</span></Fact>
+              <Fact label="Occurred">{clock(tool.occurredAt)}</Fact>
+              <Fact label="Duration">{tool.durationMs === null ? "Unavailable" : `${tool.durationMs} ms`}</Fact>
+              <Fact label="Retries">{tool.retryCount ?? "Unavailable"}</Fact>
+              <Fact label="Approval">{title(tool.approval)}</Fact>
+              <Fact label="Turn association">{title(tool.turnAssociation.strength)}</Fact>
+            </dl>
+            {(containsRedaction(tool.input) || containsRedaction(tool.result)) && (
+              <p className="redaction-label">Redacted content · capture policy preserved the evidence boundary</p>
+            )}
+            <section className="evidence-payload"><h3>Input</h3><pre>{json(tool.input)}</pre></section>
+            <section className="evidence-payload"><h3>Result</h3><pre>{json(tool.result)}</pre></section>
+            {!!tool.coverageGaps.length && <p className="coverage-gap">Coverage gap · {tool.coverageGaps.map(words).join(", ")}</p>}
+          </>
+        )}
+        {agent && (
+          <>
+            <p className="eyebrow">{agent.kind === "root" ? "Root agent run" : "Subagent run"}</p>
+            <h2 ref={headingRef} tabIndex={-1}>{agent.agentType ?? "Unlabelled agent"}</h2>
+            <code>{agent.id}</code>
+            <dl className="inspector-facts">
+              <Fact label="Route">{agent.kind === "root" ? "Root" : "Delegated"}</Fact>
+              <Fact label="Parent edge">{parentLabel(agent)}</Fact>
+              <Fact label="Confidence">{agent.parentEdge?.reconciliation.confidence ?? "Exact root"}</Fact>
+              <Fact label="First seen">{clock(agent.firstObservedAt)}</Fact>
+            </dl>
+            {agent.parentEdge && (
+              <p className={`edge-note edge-${agent.parentEdge.status}`}>
+                {title(agent.parentEdge.reconciliation.rule)}. This edge is {agent.parentEdge.status}; the map does not promote inference to fact.
+              </p>
+            )}
+          </>
+        )}
+        {activity && (
+          <>
+            <p className="eyebrow">Causal activity</p>
+            <h2 ref={headingRef} tabIndex={-1}>{title(activity.event)}</h2>
+            <dl className="inspector-facts">
+              <Fact label="Occurred">{clock(activity.occurredAt)}</Fact>
+              <Fact label="Turn">{activity.turnId ?? "Unavailable"}</Fact>
+              <Fact label="Agent run">{activity.agentRunId ? shortId(activity.agentRunId) : "Unavailable"}</Fact>
+            </dl>
+            <button className="failure-jump" onClick={() => onFailure(true)} type="button">Follow to first failed Tool <kbd>F</kbd></button>
+          </>
+        )}
+        {token && (
+          <>
+            <p className="eyebrow">Provider Token usage</p>
+            <h2 ref={headingRef} tabIndex={-1}>{token.categories.total?.toLocaleString() ?? "Unavailable"} tokens</h2>
+            <dl className="inspector-facts">
+              <Fact label="Input">{token.categories.input?.toLocaleString() ?? "Unavailable"}</Fact>
+              <Fact label="Cached">{token.categories.cachedInput?.toLocaleString() ?? "Unavailable"}</Fact>
+              <Fact label="Output">{token.categories.output?.toLocaleString() ?? "Unavailable"}</Fact>
+              <Fact label="Model">{token.model ?? "Unavailable"}</Fact>
+            </dl>
+          </>
+        )}
+        {target.kind === "session" && (
+          <>
+            <p className="eyebrow">Selected Session</p>
+            <h2 ref={headingRef} tabIndex={-1}>{detail.session.ownerProfile.displayName}</h2>
+            <code>{detail.session.id}</code>
+            <dl className="inspector-facts">
+              <Fact label="Activity">{title(detail.session.activityState)}</Fact>
+              <Fact label="Outcome">{title(detail.session.annotations.outcome)}</Fact>
+              <Fact label="Routes">{detail.agentRuns.length}</Fact>
+              <Fact label="Failed tools">{detail.evidence.tools.filter(({ outcome }) => outcome === "failure").length}</Fact>
+            </dl>
+            {detail.session.synthetic.kind === "seeded" && <p className="seeded-panel">Seeded Session · {detail.session.synthetic.examplePackVersion} · owned by an Example member</p>}
+            <button className="failure-jump" disabled={!firstFailedTool(detail)} onClick={() => onFailure(true)} type="button">
+              {firstFailedTool(detail) ? "Jump to first failed Tool" : "No failed Tool captured"} <kbd>F</kbd>
+            </button>
+          </>
+        )}
+        <ProvenanceFootnote evidence={evidence} label="Evidence provenance" />
+      </div>
+      <footer className="context-meter">
+        <div><span>Context occupancy</span><strong>{occupancy?.occupancyPercent == null ? "Unavailable" : `${occupancy.occupancyPercent.toFixed(1)}%`}</strong></div>
+        <meter max="100" min="0" value={occupancy?.occupancyPercent ?? 0} />
+        <small>{detail.evidence.context.contribution.status === "unavailable" ? "Per-item contribution unavailable" : "Contribution estimated; inspect provenance"}</small>
+      </footer>
+    </aside>
+  );
+}
+
+function EvidenceLedger({ detail }: { detail: ExecutionSessionDetail }) {
+  const occupancy = new Map(
+    detail.evidence.context.occupancy.map((sample) => [sample.tokenUsageId, sample]),
+  );
+  const cost = new Map(
+    detail.evidence.costEstimates.map((estimate) => [estimate.tokenUsageId, estimate]),
+  );
+  return (
+    <section className="evidence-ledger" aria-labelledby="evidence-ledger-title">
+      <header>
+        <span className="section-code">Progression and coverage</span>
+        <h3 id="evidence-ledger-title">Token, Context, and capability evidence</h3>
+      </header>
+      <div className="progression-table" role="region" aria-label="Token and Context progression" tabIndex={0}>
+        <table>
+          <thead><tr><th>Observed</th><th>Model</th><th>Total Tokens</th><th>Context occupancy</th><th>Cost estimate</th><th>Fidelity</th></tr></thead>
+          <tbody>
+            {detail.evidence.tokenUsage.map((sample) => {
+              const context = occupancy.get(sample.id);
+              const estimate = cost.get(sample.id);
+              return (
+                <tr key={sample.id}>
+                  <td><time dateTime={sample.occurredAt}>{clock(sample.occurredAt)}</time></td>
+                  <td>{sample.model ?? "Unavailable"}</td>
+                  <td>{sample.categories.total?.toLocaleString() ?? "Unavailable"}</td>
+                  <td>{context?.occupancyPercent == null ? "Unavailable" : `${context.occupancyPercent.toFixed(1)}%`}</td>
+                  <td>{estimate?.status === "estimated" && estimate.amount !== null ? `${estimate.amount} ${estimate.currency}` : "Unavailable"}</td>
+                  <td><EvidenceMark evidence={sample.evidence} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {!detail.evidence.tokenUsage.length && <p>Token and Context progression is unavailable for this Session.</p>}
+      </div>
+      <div className="coverage-columns">
+        <div>
+          <h4>Capability coverage</h4>
+          {detail.evidence.capabilities.map((capability) => (
+            <article key={capability.capability}>
+              <span className={`capability-state capability-${capability.state}`}>{title(capability.state)}</span>
+              <strong>{title(capability.capability)}</strong>
+              <small>{capability.note}</small>
+              <ProvenanceFootnote evidence={capability.evidence} />
+            </article>
+          ))}
+          {!detail.evidence.capabilities.length && <p>Capability snapshot unavailable.</p>}
+        </div>
+        <div>
+          <h4>Lifecycle evidence</h4>
+          {detail.evidence.lifecycle.map((event) => (
+            <article key={event.id}>
+              <span>{title(event.kind)}</span>
+              <strong>{event.event}</strong>
+              <small>{clock(event.occurredAt)} · Turn {event.turnAssociation.turnId ?? "unavailable"}</small>
+              <ProvenanceFootnote evidence={event.evidence} />
+            </article>
+          ))}
+          {!detail.evidence.lifecycle.length && <p>No lifecycle evidence was captured.</p>}
+        </div>
+        <div>
+          <h4>Relay-local Git sample</h4>
+          {detail.session.gitContext ? (
+            <article>
+              <span>{title(detail.session.gitContext.status)}</span>
+              <strong>{detail.session.gitContext.remoteIdentity ?? detail.session.gitContext.repositoryRoot ?? "Repository unavailable"}</strong>
+              <small>{detail.session.gitContext.branch ?? "Branch unavailable"} · sampled {clock(detail.session.gitContext.sampledAt)}</small>
+              <p>This relay-local observation is not proof of earlier Git state.</p>
+            </article>
+          ) : <p>Git context unavailable.</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function SessionInspector({ member }: { member: AuthenticatedSessionResponse["member"] }) {
+  const parameters = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [activity, setActivity] = useState<OrganizationActivityResponse>();
   const [detail, setDetail] = useState<ExecutionSessionDetail>();
+  const [target, setTarget] = useState<InvestigationTarget>();
+  const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  const [includeSeeded, setIncludeSeeded] = useState(parameters.get("includeSeeded") === "true");
+  const [comparisonIds, setComparisonIds] = useState<string[]>([]);
+  const [comparisonClaim, setComparisonClaim] = useState("The selected Sessions show a repeated Tool failure pattern.");
+  const [comparisonKind, setComparisonKind] = useState<"pattern" | "outcome" | "causal" | "productivity">("pattern");
+  const [comparison, setComparison] = useState<ComparisonResponse>();
+  const [cursor, setCursor] = useState(100);
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
-  const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
-  const [searchText, setSearchText] = useState("");
-  const [includeSeeded, setIncludeSeeded] = useState(
-    new URLSearchParams(window.location.search).get("includeSeeded") === "true",
-  );
-  const [activity, setActivity] = useState<OrganizationActivityResponse>();
-  const [comparisonSelections, setComparisonSelections] = useState<string[]>([]);
-  const [comparisonClaim, setComparisonClaim] = useState("");
-  const [comparisonKind, setComparisonKind] = useState<
-    "pattern" | "outcome" | "causal" | "productivity"
-  >("pattern");
-  const [comparison, setComparison] = useState<ComparisonResponse>();
-  const selectedSessionId = useRef<string | undefined>(
-    new URLSearchParams(window.location.search).get("session") ?? undefined,
-  );
+  const selectedSessionId = useRef(parameters.get("session") ?? undefined);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const inspectorHeadingRef = useRef<HTMLHeadingElement>(null);
 
-  const loadSession = useCallback(async (sessionId: string) => {
-    selectedSessionId.current = sessionId;
-    const url = new URL(window.location.href);
-    url.searchParams.set("session", sessionId);
-    if (includeSeeded) url.searchParams.set("includeSeeded", "true");
-    else url.searchParams.delete("includeSeeded");
-    window.history.replaceState(null, "", url);
-    setDetail(
-      await fetchJson<ExecutionSessionDetail>(
-        `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
-      ),
-    );
+  const openSession = useCallback(async (sessionId: string) => {
+    try {
+      const next = await fetchJson<ExecutionSessionDetail>(`/api/v1/sessions/${encodeURIComponent(sessionId)}`);
+      const sameSession = selectedSessionId.current === sessionId;
+      selectedSessionId.current = sessionId;
+      setDetail(next);
+      setTarget((current) => sameSession && current ? current : { kind: "session", id: sessionId });
+      setCursor(100);
+      const url = new URL(window.location.href);
+      url.searchParams.set("session", sessionId);
+      if (includeSeeded) url.searchParams.set("includeSeeded", "true");
+      else url.searchParams.delete("includeSeeded");
+      window.history.replaceState(null, "", url);
+      setError(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The Session could not be opened.");
+    }
   }, [includeSeeded]);
 
-  const refreshThroughQuery = useCallback(
-    async (fallbackSessionId?: string) => {
-      try {
-        const parameters = new URLSearchParams();
-        if (searchText.trim()) parameters.set("q", searchText.trim());
-        if (includeSeeded) parameters.set("includeSeeded", "true");
-        const response = await fetchJson<OrganizationActivityResponse>(
-          `/api/v1/organization/activity?${parameters.toString()}`,
-        );
-        setActivity(response);
-        setSessions(response.items);
-        const sessionId =
-          selectedSessionId.current ?? fallbackSessionId ?? response.items[0]?.id;
-        if (sessionId && response.items.some(({ id }) => id === sessionId)) {
-          await loadSession(sessionId);
-        } else {
-          selectedSessionId.current = undefined;
-          setDetail(undefined);
-        }
-        setError(undefined);
-      } catch {
-        setError("Session history could not be refreshed through /api/v1.");
-      } finally {
-        setLoading(false);
+  const refresh = useCallback(async (fallbackSessionId?: string) => {
+    try {
+      const search = new URLSearchParams();
+      if (submittedQuery.trim()) search.set("q", submittedQuery.trim());
+      if (includeSeeded) search.set("includeSeeded", "true");
+      const next = await fetchJson<OrganizationActivityResponse>(`/api/v1/organization/activity?${search}`);
+      setActivity(next);
+      const requested = selectedSessionId.current ?? fallbackSessionId;
+      const sessionId = requested && next.items.some(({ id }) => id === requested) ? requested : next.items[0]?.id;
+      if (sessionId) await openSession(sessionId);
+      else {
+        selectedSessionId.current = undefined;
+        setDetail(undefined);
+        setTarget(undefined);
       }
-    },
-    [includeSeeded, loadSession, searchText],
-  );
+      setError(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Organization activity could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }, [includeSeeded, openSession, submittedQuery]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    const stream = new EventSource("/api/v1/live", { withCredentials: true });
+    stream.onopen = () => {
+      setLiveStatus("connected");
+      void refresh();
+    };
+    stream.onerror = () => {
+      setLiveStatus("interrupted");
+      void refresh();
+    };
+    const onUpdate = (message: MessageEvent) => {
+      const event = JSON.parse(message.data) as LiveExecutionEvent;
+      void refresh(event.sessionId);
+    };
+    stream.addEventListener("session.updated", onUpdate);
+    return () => {
+      stream.removeEventListener("session.updated", onUpdate);
+      stream.close();
+    };
+  }, [refresh]);
+
+  const followFailure = useCallback((focus = false) => {
+    if (!detail) return;
+    const failure = firstFailedTool(detail);
+    if (!failure) return;
+    setTarget({ kind: "tool", id: failure.id });
+    setCursor(timePercent(failure.occurredAt, detail));
+    const url = new URL(window.location.href);
+    if (failure.turnAssociation.turnId) url.searchParams.set("turn", failure.turnAssociation.turnId);
+    window.history.replaceState(null, "", url);
+    if (focus) requestAnimationFrame(() => inspectorHeadingRef.current?.focus());
+  }, [detail]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const element = event.target as HTMLElement;
+      const editing = element.matches("input, textarea, select, [contenteditable='true']");
+      if (editing) return;
+      if (event.key === "/") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      } else if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        followFailure(true);
+      } else if (["j", "k"].includes(event.key.toLowerCase()) && activity?.items.length) {
+        event.preventDefault();
+        const current = activity.items.findIndex(({ id }) => id === detail?.session.id);
+        const delta = event.key.toLowerCase() === "j" ? 1 : -1;
+        const next = activity.items[(current + delta + activity.items.length) % activity.items.length];
+        if (next) void openSession(next.id);
+      } else if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+        event.preventDefault();
+        setCursor((current) => Math.max(0, Math.min(100, current + (event.key === "ArrowRight" ? 4 : -4))));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activity, detail?.session.id, followFailure, openSession]);
+
+  useEffect(() => {
+    if (!detail) return;
+    const deepLink = new URLSearchParams(window.location.search);
+    const activityId = deepLink.get("activity");
+    const turnId = deepLink.get("turn");
+    const event = activityId
+      ? detail.timeline.find(({ sourceEventId }) => sourceEventId === activityId)
+      : turnId
+        ? detail.timeline.find((item) => item.turnId === turnId)
+        : undefined;
+    if (event) setTarget({ kind: "activity", id: event.sourceEventId });
+  }, [detail?.session.id]);
+
+  const activeTarget = target ?? (detail ? { kind: "session" as const, id: detail.session.id } : undefined);
+  const totalTokens = detail?.evidence.tokenUsage.reduce((sum, sample) => sum + (sample.categories.total ?? 0), 0) ?? 0;
 
   async function annotate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!detail) return;
     const data = new FormData(event.currentTarget);
-    const response = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(detail.session.id)}/annotations`,
-      {
+    try {
+      await fetchJson(`/api/v1/sessions/${encodeURIComponent(detail.session.id)}/annotations`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           outcome: data.get("outcome"),
           reviewStatus: data.get("reviewStatus"),
-          tags: String(data.get("tags") ?? "")
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean),
+          tags: String(data.get("tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
         }),
-      },
-    );
-    if (!response.ok) {
-      setError("The Session annotation could not be saved.");
-      return;
+      });
+      await refresh(detail.session.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The annotation could not be saved.");
     }
-    await loadSession(detail.session.id);
-    await refreshThroughQuery(detail.session.id);
   }
 
-  async function compareSelected(event: FormEvent<HTMLFormElement>) {
+  async function compare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const response = await fetch("/api/v1/comparisons", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        selections: comparisonSelections.map((sessionId) => ({
-          scope: "session",
-          sessionId,
-        })),
-        filters: searchText.trim() ? { q: searchText.trim() } : {},
-        includeSeeded,
-        claim: { kind: comparisonKind, statement: comparisonClaim },
-      }),
-    });
-    if (!response.ok) {
-      setError("The selected comparison could not be completed.");
-      return;
+    try {
+      setComparison(await fetchJson<ComparisonResponse>("/api/v1/comparisons", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          selections: comparisonIds.map((sessionId) => ({ scope: "session", sessionId })),
+          filters: submittedQuery ? { q: submittedQuery } : {},
+          includeSeeded,
+          claim: { kind: comparisonKind, statement: comparisonClaim },
+        }),
+      }));
+      setError(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The comparison could not be completed.");
     }
-    setComparison((await response.json()) as ComparisonResponse);
-    setError(undefined);
   }
-
-  useEffect(() => {
-    void refreshThroughQuery();
-
-    const events = new EventSource("/api/v1/live");
-    events.onopen = () => {
-      setLiveStatus("connected");
-      void refreshThroughQuery();
-    };
-    events.addEventListener("session.updated", (message) => {
-      const event = JSON.parse(message.data) as LiveExecutionEvent;
-      void refreshThroughQuery(event.sessionId);
-    });
-    events.onerror = () => {
-      setLiveStatus("interrupted");
-      void refreshThroughQuery();
-    };
-
-    return () => events.close();
-  }, [refreshThroughQuery]);
-
-  useEffect(() => {
-    if (!detail) return;
-    const parameters = new URLSearchParams(window.location.search);
-    const activityId = parameters.get("activity");
-    const turnId = parameters.get("turn");
-    const targetId = activityId
-      ? `activity-${encodeURIComponent(activityId)}`
-      : turnId
-        ? `turn-${encodeURIComponent(turnId)}`
-        : undefined;
-    if (targetId) document.getElementById(targetId)?.scrollIntoView({ block: "center" });
-  }, [detail]);
-
-  const rootRuns = detail?.agentRuns.filter(({ kind }) => kind === "root") ?? [];
-  const subagentRuns =
-    detail?.agentRuns.filter(({ kind }) => kind === "subagent") ?? [];
 
   return (
-    <section className="card inspector-card" aria-labelledby="inspector-title">
-      <div className="inspector-heading">
+    <section className="investigation-shell" aria-label="Session investigation">
+      <header className="investigation-masthead">
         <div>
-          <p className="eyebrow">Canonical execution</p>
-          <h2 id="inspector-title">Session inspector</h2>
+          <span className="section-code">Loupe / execution cartography</span>
+          <strong>{detail ? shortId(detail.session.id) : "Organization evidence"}</strong>
+          <span>{detail?.session.ownerProfile.displayName ?? "Select a captured Session"}</span>
         </div>
-        <p
-          className={`live-status live-${liveStatus}`}
-          role="status"
-          aria-label="Live updates"
-        >
-          {liveStatus === "connected"
-            ? "Live updates connected"
-            : liveStatus === "interrupted"
-              ? "Live updates interrupted; reconnecting through /api/v1"
-              : "Connecting live updates"}
+        <p className={`live-status live-${liveStatus}`} role="status" aria-label="Live updates">
+          <i aria-hidden="true" />
+          {liveStatus === "connected" ? "Live updates connected" : liveStatus === "interrupted" ? "Live updates interrupted; reconnecting and refreshing through /api/v1" : "Connecting live updates"}
         </p>
-      </div>
+      </header>
 
-      <form
-        className="discovery-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void refreshThroughQuery();
-        }}
-      >
-        <label>
-          Search Sessions, repositories, annotations, models, tools, capabilities, and errors
-          <input
-            value={searchText}
-            onChange={(event) => setSearchText(event.currentTarget.value)}
-            placeholder="Search captured evidence"
-          />
+      <form className="command-deck" onSubmit={(event) => { event.preventDefault(); setSubmittedQuery(query); }}>
+        <label className="search-field">
+          <span>Find Session evidence</span>
+          <div><input aria-label="Find Session evidence" onChange={(event) => setQuery(event.currentTarget.value)} placeholder="error, tool, branch, member…" ref={searchRef} value={query} /><kbd>/</kbd></div>
         </label>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={includeSeeded}
-            onChange={(event) => setIncludeSeeded(event.currentTarget.checked)}
-          />
+        <label className="seeded-toggle">
+          <input checked={includeSeeded} onChange={(event) => setIncludeSeeded(event.currentTarget.checked)} type="checkbox" />
           Include clearly labelled Seeded examples
         </label>
         <button type="submit">Search activity</button>
       </form>
-      {activity && (
-        <p className="section-note">
-          {activity.aggregates.sessions} Sessions · {activity.aggregates.members} Members · {activity.aggregates.repositories} repositories · Seeded {activity.syntheticInclusion}
-        </p>
-      )}
 
-      {error && <p className="error" role="alert">{error}</p>}
-      {loading && <p>Loading captured Sessions…</p>}
-      {!loading && sessions.length === 0 && (
-        <p className="lede">No captured Sessions yet.</p>
-      )}
+      {error && <div className="error-banner" role="alert"><strong>Evidence request failed</strong><span>{error}</span><button onClick={() => void refresh()} type="button">Try again</button></div>}
+      {loading && <p className="loading-state" role="status">Reading captured Organization evidence…</p>}
 
-      {sessions.length > 0 && (
-        <nav className="session-picker" aria-label="Captured Sessions">
-          {sessions.map((session) => (
-            <button
-              className={detail?.session.id === session.id ? "selected" : ""}
-              key={session.id}
-              type="button"
-              onClick={() => void loadSession(session.id)}
-            >
-              <code>{session.id}</code>
-              <span>{label(session.activityState)}</span>
-              {session.synthetic.kind === "seeded" && <span>Seeded · {session.synthetic.examplePackVersion}</span>}
-              <span>{session.ownerProfile.displayName}{session.ownerProfile.isExample ? " · Example" : ""}</span>
-            </button>
-          ))}
-        </nav>
-      )}
+      <div className="investigation-grid">
+        <OrganizationRail
+          activity={activity}
+          onOpen={(id) => void openSession(id)}
+          onToggleComparison={(id) => setComparisonIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])}
+          selectedForComparison={comparisonIds}
+          selectedId={detail?.session.id}
+        />
 
-      {sessions.length > 0 && (
-        <section className="comparison-panel" aria-labelledby="comparison-title">
-          <div>
-            <p className="eyebrow">Evidence comparison</p>
-            <h3 id="comparison-title">Compare selected Sessions</h3>
-          </div>
-          <form onSubmit={compareSelected}>
-            <div className="comparison-choices">
-              {sessions.map((session) => (
-                <label className="toggle" key={`compare-${session.id}`}>
-                  <input
-                    type="checkbox"
-                    checked={comparisonSelections.includes(session.id)}
-                    onChange={(event) =>
-                      setComparisonSelections((current) =>
-                        event.currentTarget.checked
-                          ? [...current, session.id]
-                          : current.filter((id) => id !== session.id),
-                      )
-                    }
-                  />
-                  {session.synthetic.kind === "seeded" ? "[Seeded] " : ""}
-                  <code>{session.id}</code>
-                </label>
-              ))}
-            </div>
-            <label>
-              Claim to assess
-              <input
-                value={comparisonClaim}
-                onChange={(event) => setComparisonClaim(event.currentTarget.value)}
-                placeholder="Describe a pattern or claim"
-                required
-              />
-            </label>
-            <label>
-              Claim type
-              <select
-                value={comparisonKind}
-                onChange={(event) =>
-                  setComparisonKind(event.currentTarget.value as typeof comparisonKind)
-                }
-              >
-                <option value="pattern">Pattern</option>
-                <option value="outcome">Outcome</option>
-                <option value="causal">Causal</option>
-                <option value="productivity">Productivity</option>
-              </select>
-            </label>
-            <button type="submit" disabled={!comparisonSelections.length}>
-              Compare evidence
-            </button>
-          </form>
-          {comparison && (
-            <div className="comparison-result" role="status">
-              <strong>{label(comparison.claim.classification)}</strong>
-              <p>
-                {comparison.population.selectedSessions} Sessions · {comparison.population.distinctRealTurns} real Turns · {comparison.population.seededTurns} Seeded Turns · completeness {comparison.completeness.status} · Seeded {comparison.syntheticInclusion}
-              </p>
-              {comparison.claim.refusal && (
-                <p className="error">
-                  {comparison.claim.refusal.code}: {comparison.claim.refusal.message}
-                </p>
-              )}
-              {comparison.claim.caveats.map((caveat) => (
-                <small key={caveat}>{caveat}</small>
-              ))}
-              {comparison.citations.map((citation) => (
-                <a href={citation.links.browser} key={citation.id}>
-                  {citation.synthetic === "seeded" ? "[Seeded] " : ""}
-                  {citation.sessionId} / {citation.turnId}
-                </a>
+        <section className="map-stage" aria-labelledby="execution-topology-title">
+          <header className="map-heading">
+            <div><span className="section-code">Execution graph</span><h2 id="execution-topology-title">Execution topology</h2><p>Where did the run bend?</p></div>
+            <div className="map-summary"><span><b>{detail?.agentRuns.length ?? 0}</b> routes</span><span><b>{detail?.evidence.tools.length ?? 0}</b> tools</span><span><b>{totalTokens.toLocaleString()}</b> tokens</span></div>
+          </header>
+          {detail && (
+            <div className="episode-tape" aria-label="Activity episodes">
+              {detail.activities.map((episode) => (
+                <span className={`episode-${episode.state}`} key={episode.id}>
+                  <b>{title(episode.source)}</b>
+                  {title(episode.state)} · {clock(episode.startedAt)}
+                </span>
               ))}
             </div>
           )}
+          <div className="legend" aria-label="Execution map legend">
+            <span><i className="legend-shape shape-tool" />Tool</span>
+            <span><i className="legend-shape shape-activity" />Activity</span>
+            <span><i className="legend-shape shape-token" />Token sample</span>
+            <EvidenceMark evidence={{ stability: ["observed"], derivation: "exact", sourceEventIds: [] }} />
+            <EvidenceMark evidence={{ stability: ["inferred"], derivation: "inferred", sourceEventIds: [] }} />
+            <EvidenceMark evidence={{ stability: ["unavailable"], derivation: "unavailable", sourceEventIds: [] }} />
+          </div>
+          {detail && activeTarget ? <ExecutionMap cursor={cursor} detail={detail} onTarget={setTarget} target={activeTarget} /> : <div className="map-empty"><strong>No execution graph to draw.</strong><span>Select a Session or adjust the activity search.</span></div>}
+          <div className="scrubber">
+            <button aria-label="Scan to Session start" onClick={() => setCursor(0)} type="button">|‹</button>
+            <label><span>Time scan</span><input aria-label="Session time scan" max="100" min="0" onChange={(event) => setCursor(Number(event.currentTarget.value))} type="range" value={cursor} /></label>
+            <button aria-label="Scan to latest evidence" onClick={() => setCursor(100)} type="button">›|</button>
+            <output>{Math.round(cursor)}%</output>
+          </div>
+          <p className="keyboard-route"><span>Keyboard route</span><kbd>J/K</kbd> Session <i /> <kbd>F</kbd> failed Tool <i /> <kbd>←/→</kbd> scrub <i /> <kbd>/</kbd> search</p>
         </section>
+
+        {detail && activeTarget ? <EvidenceInspector detail={detail} headingRef={inspectorHeadingRef} onFailure={followFailure} target={activeTarget} /> : <aside className="evidence-inspector inspector-empty">Select a Session to inspect evidence.</aside>}
+      </div>
+
+      {detail && activeTarget && (
+        <div className="linear-fallback">
+          <AgentTree detail={detail} onTarget={setTarget} target={activeTarget} />
+          <LinearTimeline detail={detail} onTarget={setTarget} target={activeTarget} />
+        </div>
       )}
 
       {detail && (
-        <div className="inspector-content">
-          <section aria-labelledby="annotations-title">
-            <h3 id="annotations-title">Session annotations</h3>
-            <p className="section-note">
-              Outcome {label(detail.session.annotations.outcome)} · review {label(detail.session.annotations.reviewStatus)} · tags {detail.session.annotations.tags.join(", ") || "none"}
-              {detail.session.synthetic.kind === "seeded" ? ` · Seeded ${detail.session.synthetic.examplePackVersion}` : " · Real capture"}
-            </p>
+        <div className="investigation-tools">
+          <EvidenceLedger detail={detail} />
+          <section className="annotation-panel" aria-labelledby="annotation-title">
+            <header><span className="section-code">Human assessment</span><h3 id="annotation-title">Session annotations</h3></header>
+            <p>Outcome {title(detail.session.annotations.outcome)} · review {title(detail.session.annotations.reviewStatus)} · {detail.session.annotations.tags.length ? detail.session.annotations.tags.join(", ") : "no tags"}</p>
             {(member.role === "administrator" || member.id === detail.session.owner.memberId) && (
-              <form className="annotation-form" onSubmit={annotate}>
-                <label>
-                  Outcome
-                  <select name="outcome" defaultValue={detail.session.annotations.outcome}>
-                    <option value="successful">Successful</option>
-                    <option value="partial">Partial</option>
-                    <option value="failed">Failed</option>
-                    <option value="unknown">Unknown</option>
-                  </select>
-                </label>
-                <label>
-                  Review
-                  <select name="reviewStatus" defaultValue={detail.session.annotations.reviewStatus}>
-                    <option value="exemplar">Exemplar</option>
-                    <option value="needs_help">Needs help</option>
-                    <option value="ordinary">Ordinary</option>
-                  </select>
-                </label>
-                <label>
-                  Tags (comma separated)
-                  <input name="tags" defaultValue={detail.session.annotations.tags.join(", ")} />
-                </label>
+              <form onSubmit={annotate}>
+                <label>Outcome<select defaultValue={detail.session.annotations.outcome} name="outcome"><option value="successful">Successful</option><option value="partial">Partial</option><option value="failed">Failed</option><option value="unknown">Unknown</option></select></label>
+                <label>Review<select defaultValue={detail.session.annotations.reviewStatus} name="reviewStatus"><option value="exemplar">Exemplar</option><option value="needs_help">Needs help</option><option value="ordinary">Ordinary</option></select></label>
+                <label>Tags<input defaultValue={detail.session.annotations.tags.join(", ")} name="tags" placeholder="comma separated" /></label>
                 <button type="submit">Save annotation</button>
               </form>
             )}
           </section>
-          <section aria-labelledby="canonical-session-title">
-            <h3 id="canonical-session-title">Canonical Session</h3>
-            <dl className="fact-grid">
-              <div><dt>Session identity</dt><dd><code>{detail.session.id}</code></dd></div>
-              <div><dt>Owner member</dt><dd><code>{detail.session.owner.memberId}</code></dd></div>
-              <div><dt>Owning device</dt><dd><code>{detail.session.owner.deviceId}</code></dd></div>
-              <div><dt>Activity state</dt><dd>{label(detail.session.activityState)}</dd></div>
-              <div><dt>Root agent identity</dt><dd><code>{detail.session.rootAgentRunId}</code></dd></div>
-              <div><dt>Projection</dt><dd>Version {detail.session.projectionVersion}</dd></div>
-              <div><dt>Completion</dt><dd>Permanent completion not assumed</dd></div>
-              <div><dt>Completion evidence</dt><dd>{label(detail.session.completion.evidence)}</dd></div>
-            </dl>
-            <p className="reconciliation-note">
-              Ownership reconciliation: {detail.session.ownershipReconciliation.rule.replaceAll("_", " ")}
-              {" · "}confidence {detail.session.ownershipReconciliation.confidence}
-            </p>
-            {detail.session.gitContext && (
-              <div className="git-context">
-                <h4>Relay-local Git sample</h4>
-                <p>
-                  Sampled {formatDate(detail.session.gitContext.sampledAt)} from
-                  {" "}<code>{detail.session.gitContext.provenance.cwd}</code>.
-                  This local observation is not source-reported proof of earlier Git state.
-                </p>
-                {detail.session.gitContext.status === "available" ? (
-                  <dl className="fact-grid">
-                    <div><dt>Repository root</dt><dd><code>{detail.session.gitContext.repositoryRoot}</code></dd></div>
-                    <div><dt>Remote identity</dt><dd><code>{detail.session.gitContext.remoteIdentity ?? "Unavailable"}</code></dd></div>
-                    <div><dt>Branch</dt><dd>{detail.session.gitContext.detached ? "Detached HEAD" : detail.session.gitContext.branch}</dd></div>
-                    <div><dt>Worktree</dt><dd><code>{detail.session.gitContext.worktree}</code></dd></div>
-                    <div><dt>Commit</dt><dd><code>{detail.session.gitContext.commit}</code></dd></div>
-                  </dl>
-                ) : (
-                  <p>Git context {label(detail.session.gitContext.status)}: {label(detail.session.gitContext.reason ?? "unavailable")}</p>
-                )}
+
+          <section className="comparison-panel" aria-labelledby="comparison-title">
+            <header><span className="section-code">Cited evidence</span><h3 id="comparison-title">Comparison tray</h3></header>
+            <form onSubmit={compare}>
+              <label>Claim<input onChange={(event) => setComparisonClaim(event.currentTarget.value)} required value={comparisonClaim} /></label>
+              <label>Claim type<select onChange={(event) => setComparisonKind(event.currentTarget.value as typeof comparisonKind)} value={comparisonKind}><option value="pattern">Pattern</option><option value="outcome">Outcome</option><option value="causal">Causal</option><option value="productivity">Productivity</option></select></label>
+              <button disabled={!comparisonIds.length} type="submit">Compare {comparisonIds.length || "selected"}</button>
+            </form>
+            {comparison && (
+              <div className="comparison-result" role="status">
+                <strong>{title(comparison.claim.classification)}</strong>
+                <p>{comparison.population.selectedSessions} Sessions · {comparison.population.distinctRealTurns} real Turns · completeness {comparison.completeness.status} · Seeded {words(comparison.syntheticInclusion)}</p>
+                {comparison.claim.refusal && <p className="comparison-refusal">{comparison.claim.refusal.code}: {comparison.claim.refusal.message}</p>}
+                {comparison.claim.caveats.map((caveat) => <small key={caveat}>{caveat}</small>)}
+                <nav aria-label="Evidence citations">
+                  {comparison.citations.map((citation, index) => <a href={citation.links.browser} key={citation.id}><sup>{index + 1}</sup>{citation.synthetic === "seeded" ? "Seeded · " : ""}{citation.sessionId} / {citation.turnId}</a>)}
+                </nav>
               </div>
             )}
-          </section>
-
-          <section aria-labelledby="activity-title">
-            <h3 id="activity-title">Activity episodes</h3>
-            <div className="plain-list">
-              {detail.activities.map((activity) => (
-                <article key={activity.id}>
-                  <strong>{label(activity.source)}</strong>
-                  <span className={`activity-state state-${activity.state}`}>
-                    {label(activity.state)}
-                  </span>
-                  <span>{formatDate(activity.startedAt)} — {formatDate(activity.endedAt)}</span>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section aria-labelledby="agents-title">
-            <h3 id="agents-title">Root and Subagents</h3>
-            <div className="agent-list">
-              {[...rootRuns, ...subagentRuns].map((agentRun) => (
-                <article
-                  className={agentRun.kind === "subagent" ? "subagent" : ""}
-                  key={agentRun.id}
-                >
-                  <div className="agent-title-row">
-                    <strong>
-                      {agentRun.kind === "root" ? "Root agent run" : "Subagent run"}
-                    </strong>
-                    <EvidenceLabel evidence={agentRun.identityEvidence} />
-                  </div>
-                  <code>{agentRun.id}</code>
-                  {agentRun.agentType && <span>Type: {agentRun.agentType}</span>}
-                  <ParentEvidence agentRun={agentRun} />
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section aria-labelledby="turns-title">
-            <h3 id="turns-title">Turns</h3>
-            <div className="plain-list turns-list">
-              {detail.turns.map((turn) => (
-                <article id={`turn-${encodeURIComponent(turn.id)}`} key={turn.id}>
-                  <div className="agent-title-row">
-                    <strong><code>{turn.id}</code></strong>
-                    <EvidenceLabel evidence={turn.evidence} />
-                  </div>
-                  <span>Agent run <code>{turn.agentRunId}</code></span>
-                  <span>{formatDate(turn.firstObservedAt)} — {formatDate(turn.lastObservedAt)}</span>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section aria-labelledby="tools-title">
-            <h3 id="tools-title">Tool evidence</h3>
-            <p className="section-note">
-              Hook and OTel identifiers remain separate. A coverage gap means the
-              source did not expose the fact; it does not mean the activity did not happen.
-            </p>
-            <div className="evidence-grid">
-              {detail.evidence.tools.length === 0 && (
-                <p className="unavailable-panel">Tool evidence unavailable for this Session.</p>
-              )}
-              {detail.evidence.tools.map((tool) => (
-                <article key={tool.id}>
-                  <div className="agent-title-row">
-                    <strong>{tool.toolName}</strong>
-                    <EvidenceLabel evidence={tool.evidence} />
-                  </div>
-                  <dl className="compact-facts">
-                    <div><dt>Hook id</dt><dd>{available(tool.identifiers.hookToolUseId)}</dd></div>
-                    <div><dt>OTel id</dt><dd>{available(tool.identifiers.otelCallId)}</dd></div>
-                    <div><dt>Outcome</dt><dd>{label(tool.outcome)}</dd></div>
-                    <div><dt>Approval</dt><dd>{label(tool.approval)}</dd></div>
-                    <div><dt>Duration</dt><dd>{tool.durationMs === null ? "Unavailable" : `${tool.durationMs} ms`}</dd></div>
-                    <div><dt>Retries</dt><dd>{available(tool.retryCount)}</dd></div>
-                  </dl>
-                  <details>
-                    <summary>Input and result evidence</summary>
-                    <pre>{jsonEvidence(tool.input)}</pre>
-                    <pre>{jsonEvidence(tool.result)}</pre>
-                  </details>
-                  {tool.coverageGaps.length > 0 && (
-                    <small>Coverage gaps: {tool.coverageGaps.map(label).join("; ")}</small>
-                  )}
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section aria-labelledby="usage-title">
-            <h3 id="usage-title">Token and Context evidence</h3>
-            <p className="section-note">
-              Token usage is provider-reported consumption. Context occupancy is a
-              separate inference from input Tokens and an emitted Context-window limit.
-            </p>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th><th>Model</th><th>Input</th><th>Cached input</th>
-                    <th>Output</th><th>Reasoning</th><th>Total</th><th>Turn association</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.evidence.tokenUsage.map((sample) => (
-                    <tr key={sample.id}>
-                      <td>{formatDate(sample.occurredAt)}</td>
-                      <td>{available(sample.model)}</td>
-                      <td>{available(sample.categories.input)}</td>
-                      <td>{available(sample.categories.cachedInput)}</td>
-                      <td>{available(sample.categories.output)}</td>
-                      <td>{available(sample.categories.reasoningOutput)}</td>
-                      <td>{available(sample.categories.total)}</td>
-                      <td>{label(sample.turnAssociation.strength)} · {sample.turnAssociation.method.replaceAll("_", " ")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {detail.evidence.tokenUsage.length === 0 && (
-              <p className="unavailable-panel">Provider Token usage unavailable for this Session.</p>
-            )}
-            <div className="evidence-grid context-grid">
-              {detail.evidence.context.limits.map((limit, index) => (
-                <article key={`${limit.model ?? "unknown"}-${index}`}>
-                  <strong>Reported limits · {available(limit.model)}</strong>
-                  <span>Context window: {available(limit.contextWindow)} Tokens</span>
-                  <span>Auto-compaction: {available(limit.autoCompactionLimit)} Tokens</span>
-                  <EvidenceLabel evidence={limit.evidence} />
-                </article>
-              ))}
-              {detail.evidence.context.occupancy.map((item) => (
-                <article key={item.tokenUsageId}>
-                  <strong>
-                    {detail.evidence.context.firstRequestBaseline?.tokenUsageId === item.tokenUsageId
-                      ? "First-request Context baseline"
-                      : "Inferred Context occupancy"}
-                  </strong>
-                  <span>{item.occupancyTokens} Tokens · {item.occupancyPercent === null ? "percentage unavailable" : `${item.occupancyPercent}%`}</span>
-                  <span>Method: {item.method.replaceAll("_", " ")}</span>
-                  <small>{item.missingAssumptions.join(" ")}</small>
-                  <EvidenceLabel evidence={item.evidence} />
-                </article>
-              ))}
-              <article className="unavailable-panel">
-                <strong>Per-item Context contribution: {label(detail.evidence.context.contribution.status)}</strong>
-                <span>{detail.evidence.context.contribution.note}</span>
-                <span>Method: {detail.evidence.context.contribution.method.replaceAll("_", " ")}</span>
-              </article>
-            </div>
-          </section>
-
-          <section aria-labelledby="cost-title">
-            <h3 id="cost-title">Estimated cost</h3>
-            <p className="section-note">
-              These are API-equivalent estimates only. Provider-billed currency and
-              ChatGPT plan-credit accounting are not passively reported.
-            </p>
-            <div className="evidence-grid">
-              {detail.evidence.costEstimates.length === 0 && (
-                <p className="unavailable-panel">Cost unavailable because no Token sample was captured.</p>
-              )}
-              {detail.evidence.costEstimates.map((cost) => (
-                <article key={cost.tokenUsageId}>
-                  <strong>{cost.status === "estimated" ? `${cost.currency} ${cost.amount}` : "Estimate unavailable"}</strong>
-                  <span>Table: {available(cost.priceTableVersion)} · effective {available(cost.effectiveDate)}</span>
-                  <span>Model: {available(cost.modelMapping.observedModel)} → {available(cost.modelMapping.pricedModel)}</span>
-                  <small>{cost.reason ?? cost.billingCaveat}</small>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section aria-labelledby="lifecycle-title">
-            <h3 id="lifecycle-title">Lifecycle and capability evidence</h3>
-            <div className="plain-list lifecycle-list">
-              {detail.evidence.lifecycle.map((item) => (
-                <article key={item.id}>
-                  <strong>{label(item.kind)} · {label(item.event)}</strong>
-                  <span>{formatDate(item.occurredAt)}</span>
-                  <EvidenceLabel evidence={item.evidence} />
-                </article>
-              ))}
-            </div>
-            <div className="evidence-grid">
-              {detail.evidence.capabilities.map((capability) => (
-                <article key={capability.capability}>
-                  <div className="agent-title-row">
-                    <strong>{label(capability.capability)}</strong>
-                    <span className={`capability-state capability-${capability.state}`}>{label(capability.state)}</span>
-                  </div>
-                  <span>{capability.note}</span>
-                  <EvidenceLabel evidence={capability.evidence} />
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section aria-labelledby="timeline-title">
-            <h3 id="timeline-title">Chronological timeline</h3>
-            <ol className="timeline">
-              {detail.timeline.map((event) => (
-                <li
-                  id={`activity-${encodeURIComponent(event.sourceEventId)}`}
-                  key={event.sourceEventId}
-                >
-                  <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
-                  <strong>{label(event.event)}</strong>
-                  {event.turnId && <code>{event.turnId}</code>}
-                  <EvidenceLabel evidence={event.evidence} />
-                </li>
-              ))}
-            </ol>
           </section>
         </div>
       )}

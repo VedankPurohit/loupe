@@ -22,6 +22,9 @@ const child = spawn("pnpm", ["dev"], {
     ...process.env,
     BOOTSTRAP_CODE: "bootstrap_playwright_0123456789abcdefghijklmnopqrstuvwxyz",
     DATABASE_URL: databaseUrl,
+    PORT: process.env.TEST_SERVER_PORT ?? "3000",
+    WEB_PORT: process.env.TEST_WEB_PORT ?? "5173",
+    VITE_API_PROXY_TARGET: `http://127.0.0.1:${process.env.TEST_SERVER_PORT ?? "3000"}`,
   },
   stdio: "inherit",
 });
