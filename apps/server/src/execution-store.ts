@@ -13,6 +13,9 @@ import {
 import type {
   ActivityEpisode,
   AgentRun,
+  ComparisonRequest,
+  ComparisonResponse,
+  ComparisonSelection,
   ExecutionSession,
   ExecutionSessionDetail,
   ExamplePackImportResponse,
@@ -571,6 +574,99 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
   return [...sessions.values()];
 }
 
+function assessComparisonClaim(
+  request: ComparisonRequest,
+  distinctRealTurns: number,
+  hasHumanOutcome: boolean,
+): ComparisonResponse["claim"] {
+  const common = {
+    kind: request.claim.kind,
+    statement: request.claim.statement,
+    signals: request.claim.signals,
+  };
+  const metricCaveat =
+    "Token use, estimated cost, duration, tool count, model choice, and correlation are descriptive signals only; they do not establish productivity, outcome, or causation.";
+  if (request.claim.kind === "causal") {
+    return {
+      ...common,
+      classification: "unsupported",
+      status: "refused",
+      refusal: {
+        code: "INSUFFICIENT_CAUSAL_EVIDENCE",
+        message:
+          "Loupe cannot make this causal claim: the selected captured activity shows association, not evidence that one factor caused an outcome.",
+      },
+      caveats: [metricCaveat],
+    };
+  }
+  if (request.claim.kind === "productivity") {
+    return {
+      ...common,
+      classification: "unsupported",
+      status: "refused",
+      refusal: {
+        code: "INSUFFICIENT_PRODUCTIVITY_EVIDENCE",
+        message:
+          "Loupe cannot make this productivity claim: the selected evidence contains no validated measure of developer productivity.",
+      },
+      caveats: [metricCaveat],
+    };
+  }
+  if (request.claim.kind === "outcome") {
+    if (!hasHumanOutcome) {
+      return {
+        ...common,
+        classification: "unsupported",
+        status: "refused",
+        refusal: {
+          code: "INSUFFICIENT_OUTCOME_EVIDENCE",
+          message:
+            "Loupe cannot make this outcome claim: none of the selected real Sessions has a human-assigned outcome.",
+        },
+        caveats: [metricCaveat],
+      };
+    }
+    return {
+      ...common,
+      classification: "descriptive_comparison",
+      status: "supported",
+      refusal: null,
+      caveats: [
+        "Session outcome is a human annotation and does not establish productivity or causation.",
+        metricCaveat,
+      ],
+    };
+  }
+  if (distinctRealTurns === 0) {
+    return {
+      ...common,
+      classification: "unsupported",
+      status: "refused",
+      refusal: {
+        code: "INSUFFICIENT_REAL_TURN_EVIDENCE",
+        message:
+          "Loupe cannot support this pattern claim without evidence from at least one real captured Turn; Seeded examples are illustrative only.",
+      },
+      caveats: [metricCaveat],
+    };
+  }
+  return {
+    ...common,
+    classification:
+      distinctRealTurns >= 2
+        ? "repeated_pattern"
+        : "single_case_hypothesis",
+    status: "supported",
+    refusal: null,
+    caveats: [
+      distinctRealTurns >= 2
+        ? "A Repeated pattern describes evidence across distinct real Turns; it does not establish causation."
+        : "A single real Turn is a hypothesis for further investigation, not a Repeated pattern.",
+      metricCaveat,
+    ],
+  };
+}
+
 export class ExecutionStore {
   private readonly client;
   private readonly database;
@@ -934,6 +1030,215 @@ export class ExecutionStore {
     };
   }
 
+  async compare(
+    organizationId: string,
+    request: ComparisonRequest,
+  ): Promise<ComparisonResponse> {
+    const details = new Map<string, ExecutionSessionDetail | undefined>();
+    for (const selection of request.selections) {
+      if (!details.has(selection.sessionId)) {
+        details.set(
+          selection.sessionId,
+          await this.getSession(organizationId, selection.sessionId),
+        );
+      }
+    }
+
+    const missing: ComparisonResponse["completeness"]["missing"] = [];
+    const subjects: ComparisonResponse["subjects"] = [];
+    const citationsById = new Map<string, ComparisonResponse["citations"][number]>();
+    const selectedTurnKeys = new Set<string>();
+    const realTurnKeys = new Set<string>();
+    const seededTurnKeys = new Set<string>();
+    const evidenceGaps = new Set<string>();
+
+    const addCitation = (
+      detail: ExecutionSessionDetail,
+      turn: Turn,
+    ) => {
+      const activity = detail.timeline.find((event) => event.turnId === turn.id);
+      if (!activity) {
+        evidenceGaps.add(
+          `No captured timeline activity resolves the Turn ${turn.id} citation.`,
+        );
+        return;
+      }
+      const sessionId = detail.session.id;
+      const encodedSessionId = encodeURIComponent(sessionId);
+      const encodedTurnId = encodeURIComponent(turn.id);
+      const encodedActivityId = encodeURIComponent(activity.sourceEventId);
+      const id = `citation_${createHash("sha256")
+        .update(`${organizationId}\n${sessionId}\n${turn.id}\n${activity.sourceEventId}`)
+        .digest("hex")
+        .slice(0, 24)}`;
+      citationsById.set(id, {
+        id,
+        sessionId,
+        turnId: turn.id,
+        activityId: activity.sourceEventId,
+        synthetic: detail.session.synthetic.kind,
+        evidence: activity.evidence,
+        links: {
+          session: `/api/v1/sessions/${encodedSessionId}`,
+          turn: `/api/v1/sessions/${encodedSessionId}/turns/${encodedTurnId}`,
+          activity: `/api/v1/sessions/${encodedSessionId}/activity/${encodedActivityId}`,
+          browser: `/?session=${encodedSessionId}&turn=${encodedTurnId}&activity=${encodedActivityId}${detail.session.synthetic.kind === "seeded" ? "&includeSeeded=true" : ""}`,
+        },
+      });
+    };
+
+    for (const selection of request.selections) {
+      const detail = details.get(selection.sessionId);
+      if (!detail) {
+        missing.push({ selection, reason: "SESSION_NOT_FOUND" });
+        continue;
+      }
+      if (detail.session.synthetic.kind === "seeded" && !request.includeSeeded) {
+        missing.push({ selection, reason: "SEEDED_EXCLUDED" });
+        continue;
+      }
+      const selectedTurns =
+        selection.scope === "turn"
+          ? detail.turns.filter((turn) => turn.id === selection.turnId)
+          : detail.turns;
+      if (selection.scope === "turn" && selectedTurns.length === 0) {
+        missing.push({ selection, reason: "TURN_NOT_FOUND" });
+        continue;
+      }
+
+      for (const turn of selectedTurns) {
+        const key = `${detail.session.id}\n${turn.id}`;
+        selectedTurnKeys.add(key);
+        if (detail.session.synthetic.kind === "real") realTurnKeys.add(key);
+        else seededTurnKeys.add(key);
+        addCitation(detail, turn);
+      }
+
+      const start =
+        selection.scope === "turn"
+          ? selectedTurns[0]?.firstObservedAt
+          : detail.session.firstObservedAt;
+      const end =
+        selection.scope === "turn"
+          ? selectedTurns[0]?.lastObservedAt
+          : detail.session.lastObservedAt;
+      const turnIds = new Set(selectedTurns.map((turn) => turn.id));
+      const tools = detail.evidence.tools.filter(
+        (tool) =>
+          selection.scope === "session" ||
+          (tool.turnAssociation.turnId !== null && turnIds.has(tool.turnAssociation.turnId)),
+      );
+      const tokenUsage = detail.evidence.tokenUsage.filter(
+        (sample) =>
+          selection.scope === "session" ||
+          (sample.turnAssociation.turnId !== null && turnIds.has(sample.turnAssociation.turnId)),
+      );
+      const tokenTotals = tokenUsage
+        .map((sample) => sample.categories.total)
+        .filter((total): total is number => total !== null);
+      subjects.push({
+        selection,
+        synthetic: detail.session.synthetic.kind,
+        ownerDisplayName: detail.session.ownerProfile.displayName,
+        outcome: detail.session.annotations.outcome,
+        reviewStatus: detail.session.annotations.reviewStatus,
+        durationMs:
+          start && end
+            ? Math.max(0, new Date(end).getTime() - new Date(start).getTime())
+            : null,
+        toolCount: tools.length,
+        tokenTotal: tokenTotals.length ? Math.max(...tokenTotals) : null,
+        modelChoices: [
+          ...new Set(
+            tokenUsage
+              .map((sample) => sample.model)
+              .filter((model): model is string => model !== null),
+          ),
+        ].sort(),
+        completeness: {
+          tokenUsage: tokenUsage.length ? "available" : "unavailable",
+          toolEvidence: tools.length ? "available" : "unavailable",
+          humanOutcome:
+            detail.session.annotations.outcome === "unknown"
+              ? "unavailable"
+              : "available",
+        },
+      });
+    }
+
+    const claim = assessComparisonClaim(
+      request,
+      realTurnKeys.size,
+      subjects.some(
+        (subject) =>
+          subject.synthetic === "real" && subject.outcome !== "unknown",
+      ),
+    );
+    const selectedSessions = new Set(
+      request.selections.map((selection) => selection.sessionId),
+    ).size;
+    return {
+      population: {
+        selected: request.selections,
+        selectedSessions,
+        selectedTurns: selectedTurnKeys.size,
+        distinctRealTurns: realTurnKeys.size,
+        seededTurns: seededTurnKeys.size,
+      },
+      filters: request.filters,
+      syntheticInclusion: request.includeSeeded
+        ? "included_for_illustration"
+        : "excluded",
+      completeness: {
+        status:
+          subjects.length === 0
+            ? "unavailable"
+            : missing.length || evidenceGaps.size
+              ? "partial"
+              : "complete",
+        selected: request.selections.length,
+        resolved: subjects.length,
+        missing,
+        evidenceGaps: [...evidenceGaps],
+      },
+      subjects,
+      citations: [...citationsById.values()],
+      claim,
+    };
+  }
+
+  async getCitationTurn(
+    organizationId: string,
+    canonicalSessionId: string,
+    turnId: string,
+  ): Promise<{ session: ExecutionSession; turn: Turn } | undefined> {
+    const detail = await this.getSession(organizationId, canonicalSessionId);
+    const turn = detail?.turns.find((candidate) => candidate.id === turnId);
+    return detail && turn ? { session: detail.session, turn } : undefined;
+  }
+
+  async getCitationActivity(
+    organizationId: string,
+    canonicalSessionId: string,
+    activityId: string,
+  ):
+    Promise<
+      | {
+          sessionId: string;
+          turnId: string | null;
+          activity: ExecutionSessionDetail["timeline"][number];
+        }
+      | undefined
+    > {
+    const detail = await this.getSession(organizationId, canonicalSessionId);
+    const activity = detail?.timeline.find(
+      (candidate) => candidate.sourceEventId === activityId,
+    );
+    return detail && activity
+      ? { sessionId: detail.session.id, turnId: activity.turnId, activity }
+      : undefined;
+  }
+
   async annotateSession(
     organizationId: string,
     canonicalSessionId: string,
@@ -1039,10 +1344,16 @@ export class ExecutionStore {
         exampleMemberId = member!.id;
       }
       const sessionIds = ["seeded-starter-compilation"];
+      const observedAt = new Date("2026-07-01T09:00:00.000Z");
+      const sessionDatabaseId = stableUuid(
+        "example-pack",
+        organizationId,
+        version,
+        sessionIds[0]!,
+      );
       if (!existingImport) {
-        const observedAt = new Date("2026-07-01T09:00:00.000Z");
         await transaction.insert(executionSessions).values({
-          id: stableUuid("example-pack", organizationId, version, sessionIds[0]!),
+          id: sessionDatabaseId,
           organizationId,
           canonicalSessionId: sessionIds[0]!,
           ownerMemberId: exampleMemberId,
@@ -1086,6 +1397,27 @@ export class ExecutionStore {
           importedByMemberId,
         });
       }
+      await transaction
+        .insert(executionTurns)
+        .values({
+          id: stableUuid(
+            "example-pack-turn",
+            organizationId,
+            version,
+            "seeded-turn-compilation",
+          ),
+          sessionId: sessionDatabaseId,
+          canonicalTurnId: "seeded-turn-compilation",
+          agentRunId: `root:${sessionIds[0]}`,
+          firstObservedAt: observedAt,
+          lastObservedAt: observedAt,
+          evidence: {
+            stability: ["unavailable"],
+            derivation: "unavailable",
+            sourceEventIds: [],
+          },
+        })
+        .onConflictDoNothing();
       return {
         version,
         imported: !existingImport,

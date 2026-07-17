@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import type {
   AgentRun,
   AuthenticatedSessionResponse,
+  ComparisonResponse,
   ExecutionSession,
   ExecutionSessionDetail,
   LiveExecutionEvent,
@@ -85,6 +86,12 @@ export function SessionInspector({
     new URLSearchParams(window.location.search).get("includeSeeded") === "true",
   );
   const [activity, setActivity] = useState<OrganizationActivityResponse>();
+  const [comparisonSelections, setComparisonSelections] = useState<string[]>([]);
+  const [comparisonClaim, setComparisonClaim] = useState("");
+  const [comparisonKind, setComparisonKind] = useState<
+    "pattern" | "outcome" | "causal" | "productivity"
+  >("pattern");
+  const [comparison, setComparison] = useState<ComparisonResponse>();
   const selectedSessionId = useRef<string | undefined>(
     new URLSearchParams(window.location.search).get("session") ?? undefined,
   );
@@ -159,6 +166,29 @@ export function SessionInspector({
     await refreshThroughQuery(detail.session.id);
   }
 
+  async function compareSelected(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const response = await fetch("/api/v1/comparisons", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        selections: comparisonSelections.map((sessionId) => ({
+          scope: "session",
+          sessionId,
+        })),
+        filters: searchText.trim() ? { q: searchText.trim() } : {},
+        includeSeeded,
+        claim: { kind: comparisonKind, statement: comparisonClaim },
+      }),
+    });
+    if (!response.ok) {
+      setError("The selected comparison could not be completed.");
+      return;
+    }
+    setComparison((await response.json()) as ComparisonResponse);
+    setError(undefined);
+  }
+
   useEffect(() => {
     void refreshThroughQuery();
 
@@ -178,6 +208,19 @@ export function SessionInspector({
 
     return () => events.close();
   }, [refreshThroughQuery]);
+
+  useEffect(() => {
+    if (!detail) return;
+    const parameters = new URLSearchParams(window.location.search);
+    const activityId = parameters.get("activity");
+    const turnId = parameters.get("turn");
+    const targetId = activityId
+      ? `activity-${encodeURIComponent(activityId)}`
+      : turnId
+        ? `turn-${encodeURIComponent(turnId)}`
+        : undefined;
+    if (targetId) document.getElementById(targetId)?.scrollIntoView({ block: "center" });
+  }, [detail]);
 
   const rootRuns = detail?.agentRuns.filter(({ kind }) => kind === "root") ?? [];
   const subagentRuns =
@@ -256,6 +299,84 @@ export function SessionInspector({
             </button>
           ))}
         </nav>
+      )}
+
+      {sessions.length > 0 && (
+        <section className="comparison-panel" aria-labelledby="comparison-title">
+          <div>
+            <p className="eyebrow">Evidence comparison</p>
+            <h3 id="comparison-title">Compare selected Sessions</h3>
+          </div>
+          <form onSubmit={compareSelected}>
+            <div className="comparison-choices">
+              {sessions.map((session) => (
+                <label className="toggle" key={`compare-${session.id}`}>
+                  <input
+                    type="checkbox"
+                    checked={comparisonSelections.includes(session.id)}
+                    onChange={(event) =>
+                      setComparisonSelections((current) =>
+                        event.currentTarget.checked
+                          ? [...current, session.id]
+                          : current.filter((id) => id !== session.id),
+                      )
+                    }
+                  />
+                  {session.synthetic.kind === "seeded" ? "[Seeded] " : ""}
+                  <code>{session.id}</code>
+                </label>
+              ))}
+            </div>
+            <label>
+              Claim to assess
+              <input
+                value={comparisonClaim}
+                onChange={(event) => setComparisonClaim(event.currentTarget.value)}
+                placeholder="Describe a pattern or claim"
+                required
+              />
+            </label>
+            <label>
+              Claim type
+              <select
+                value={comparisonKind}
+                onChange={(event) =>
+                  setComparisonKind(event.currentTarget.value as typeof comparisonKind)
+                }
+              >
+                <option value="pattern">Pattern</option>
+                <option value="outcome">Outcome</option>
+                <option value="causal">Causal</option>
+                <option value="productivity">Productivity</option>
+              </select>
+            </label>
+            <button type="submit" disabled={!comparisonSelections.length}>
+              Compare evidence
+            </button>
+          </form>
+          {comparison && (
+            <div className="comparison-result" role="status">
+              <strong>{label(comparison.claim.classification)}</strong>
+              <p>
+                {comparison.population.selectedSessions} Sessions · {comparison.population.distinctRealTurns} real Turns · {comparison.population.seededTurns} Seeded Turns · completeness {comparison.completeness.status} · Seeded {comparison.syntheticInclusion}
+              </p>
+              {comparison.claim.refusal && (
+                <p className="error">
+                  {comparison.claim.refusal.code}: {comparison.claim.refusal.message}
+                </p>
+              )}
+              {comparison.claim.caveats.map((caveat) => (
+                <small key={caveat}>{caveat}</small>
+              ))}
+              {comparison.citations.map((citation) => (
+                <a href={citation.links.browser} key={citation.id}>
+                  {citation.synthetic === "seeded" ? "[Seeded] " : ""}
+                  {citation.sessionId} / {citation.turnId}
+                </a>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {detail && (
@@ -373,7 +494,7 @@ export function SessionInspector({
             <h3 id="turns-title">Turns</h3>
             <div className="plain-list turns-list">
               {detail.turns.map((turn) => (
-                <article key={turn.id}>
+                <article id={`turn-${encodeURIComponent(turn.id)}`} key={turn.id}>
                   <div className="agent-title-row">
                     <strong><code>{turn.id}</code></strong>
                     <EvidenceLabel evidence={turn.evidence} />
@@ -535,7 +656,10 @@ export function SessionInspector({
             <h3 id="timeline-title">Chronological timeline</h3>
             <ol className="timeline">
               {detail.timeline.map((event) => (
-                <li key={event.sourceEventId}>
+                <li
+                  id={`activity-${encodeURIComponent(event.sourceEventId)}`}
+                  key={event.sourceEventId}
+                >
                   <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
                   <strong>{label(event.event)}</strong>
                   {event.turnId && <code>{event.turnId}</code>}

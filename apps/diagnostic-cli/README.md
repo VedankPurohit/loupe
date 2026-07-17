@@ -55,3 +55,21 @@ Example pack through the separate server-controlled path:
 ```bash
 pnpm --filter @workspace/diagnostic-cli diagnostic examples import starter-v1
 ```
+
+## Compare and cite evidence
+
+Compare complete Sessions by id or individual Turns as `session-id:turn-id`:
+
+```bash
+pnpm --filter @workspace/diagnostic-cli diagnostic compare \
+  session-a:turn-a session-b:turn-b \
+  --claim "The selected Turns used the same workflow."
+```
+
+The output names the selected real/Seeded population, completeness, evidence
+classification, caveats, stable refusal reason when applicable, and navigable
+browser citations. `--include-seeded` is explicit and illustrative only. Use
+`--kind outcome`, `--kind causal`, or `--kind productivity` to ask Loupe to
+assess those claims; unsupported conclusions are refused rather than inferred
+from Tokens, cost, duration, Tool count, model choice, or correlation. Add
+`--json` for the stable structured response.

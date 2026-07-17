@@ -89,6 +89,9 @@ All public HTTP routes live under `/api/v1`. The initial routes are:
 - `POST /api/v1/device/capture-records`
 - `GET /api/v1/capture-records/:id` (browser member only)
 - `GET /api/v1/organization/activity` (structured/full-text discovery; Seeded excluded by default)
+- `POST /api/v1/comparisons` (selected Session/Turn evidence comparisons and stable refusals)
+- `GET /api/v1/sessions/:id/turns/:turnId` (authorized Turn citation target)
+- `GET /api/v1/sessions/:id/activity/:sourceEventId` (authorized activity citation target)
 - `PATCH /api/v1/sessions/:id/annotations` (Session owner or Administrator)
 - `POST /api/v1/administration/example-packs/starter-v1/import` (Administrator only, explicit and idempotent)
 
@@ -166,6 +169,7 @@ The Playwright harness owns a disposable `agent_observer_playwright` database, c
 - [`docs/live-execution.md`](./docs/live-execution.md) — canonical Session/Turn/Agent identities, Activity episodes, replay and reconciliation, query contracts, SSE recovery, and parentage limits.
 - [`docs/session-evidence.md`](./docs/session-evidence.md) — Tool and lifecycle coverage, Token categories and Turn association, Context methods, versioned estimated cost, capability gaps, and refusal language.
 - [`docs/organization-discovery-and-search.md`](./docs/organization-discovery-and-search.md) — filters, pagination, descriptive aggregates, annotations, deep links, and the explicit Seeded Example-pack boundary.
+- [`docs/session-comparisons.md`](./docs/session-comparisons.md) — populations, completeness, citations, real-Turn evidence rules, synthetic inclusion, and unsupported-claim refusals.
 - [`docs/macos-codex-setup.md`](./docs/macos-codex-setup.md) — setup preview and consent, `launchd`, configuration backup/restore, disconnect, uninstall, recovery, and the executable first-day checkpoint.
 - [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.
 - [Build-ready specification](./.scratch/coding-agent-observability/spec.md) — normative product, architecture, testing, and acceptance strategy.

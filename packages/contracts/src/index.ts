@@ -478,6 +478,159 @@ export const ExecutionSessionDetailResponseSchema = z.object({
   evidence: RichSessionEvidenceSchema,
 });
 
+export const ComparisonSelectionSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("session"),
+    sessionId: z.string().min(1),
+  }),
+  z.object({
+    scope: z.literal("turn"),
+    sessionId: z.string().min(1),
+    turnId: z.string().min(1),
+  }),
+]);
+
+export const ComparisonFiltersSchema = z.object({
+  q: z.string().trim().min(1).max(240).optional(),
+  from: z.iso.datetime().optional(),
+  to: z.iso.datetime().optional(),
+  memberId: z.uuid().optional(),
+  repository: z.string().trim().min(1).max(240).optional(),
+  activityState: z.enum(["live", "idle", "resumed"]).optional(),
+  outcome: z.enum(["successful", "partial", "failed", "unknown"]).optional(),
+  reviewStatus: z.enum(["exemplar", "needs_help", "ordinary"]).optional(),
+  tag: z.string().trim().min(1).max(80).optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  tool: z.string().trim().min(1).max(120).optional(),
+  capability: z.string().trim().min(1).max(120).optional(),
+  error: z.string().trim().min(1).max(240).optional(),
+});
+
+export const ComparisonClaimSchema = z.object({
+  kind: z.enum(["pattern", "outcome", "causal", "productivity"]),
+  statement: z.string().trim().min(1).max(1_000),
+  signals: z
+    .array(
+      z.enum([
+        "human_session_outcome",
+        "token_usage",
+        "cost",
+        "duration",
+        "tool_count",
+        "model_choice",
+        "correlation",
+      ]),
+    )
+    .default([]),
+});
+
+export const ComparisonRequestSchema = z.object({
+  selections: z.array(ComparisonSelectionSchema).min(1).max(50),
+  filters: ComparisonFiltersSchema.default({}),
+  includeSeeded: z.boolean().default(false),
+  claim: ComparisonClaimSchema,
+});
+
+export const EvidenceCitationSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  activityId: z.uuid(),
+  synthetic: z.enum(["real", "seeded"]),
+  evidence: EvidenceSchema,
+  links: z.object({
+    session: z.string().min(1),
+    turn: z.string().min(1),
+    activity: z.string().min(1),
+    browser: z.string().min(1),
+  }),
+});
+
+export const ComparisonResponseSchema = z.object({
+  population: z.object({
+    selected: z.array(ComparisonSelectionSchema),
+    selectedSessions: z.number().int().nonnegative(),
+    selectedTurns: z.number().int().nonnegative(),
+    distinctRealTurns: z.number().int().nonnegative(),
+    seededTurns: z.number().int().nonnegative(),
+  }),
+  filters: ComparisonFiltersSchema,
+  syntheticInclusion: z.enum(["excluded", "included_for_illustration"]),
+  completeness: z.object({
+    status: z.enum(["complete", "partial", "unavailable"]),
+    selected: z.number().int().positive(),
+    resolved: z.number().int().nonnegative(),
+    missing: z.array(
+      z.object({
+        selection: ComparisonSelectionSchema,
+        reason: z.enum(["SESSION_NOT_FOUND", "TURN_NOT_FOUND", "SEEDED_EXCLUDED"]),
+      }),
+    ),
+    evidenceGaps: z.array(z.string()),
+  }),
+  subjects: z.array(
+    z.object({
+      selection: ComparisonSelectionSchema,
+      synthetic: z.enum(["real", "seeded"]),
+      ownerDisplayName: z.string(),
+      outcome: z.enum(["successful", "partial", "failed", "unknown"]),
+      reviewStatus: z.enum(["exemplar", "needs_help", "ordinary"]),
+      durationMs: z.number().nonnegative().nullable(),
+      toolCount: z.number().int().nonnegative(),
+      tokenTotal: z.number().int().nonnegative().nullable(),
+      modelChoices: z.array(z.string()),
+      completeness: z.object({
+        tokenUsage: z.enum(["available", "unavailable"]),
+        toolEvidence: z.enum(["available", "unavailable"]),
+        humanOutcome: z.enum(["available", "unavailable"]),
+      }),
+    }),
+  ),
+  citations: z.array(EvidenceCitationSchema),
+  claim: z.object({
+    kind: ComparisonClaimSchema.shape.kind,
+    statement: z.string(),
+    signals: ComparisonClaimSchema.shape.signals,
+    classification: z.enum([
+      "repeated_pattern",
+      "single_case_hypothesis",
+      "descriptive_comparison",
+      "unsupported",
+    ]),
+    status: z.enum(["supported", "refused"]),
+    refusal: z
+      .object({
+        code: z.enum([
+          "INSUFFICIENT_REAL_TURN_EVIDENCE",
+          "INSUFFICIENT_OUTCOME_EVIDENCE",
+          "INSUFFICIENT_CAUSAL_EVIDENCE",
+          "INSUFFICIENT_PRODUCTIVITY_EVIDENCE",
+        ]),
+        message: z.string().min(1),
+      })
+      .nullable(),
+    caveats: z.array(z.string()),
+  }),
+});
+
+export const ComparisonTurnParamsSchema = z.object({
+  id: z.string().min(1),
+  turnId: z.string().min(1),
+});
+export const ComparisonActivityParamsSchema = z.object({
+  id: z.string().min(1),
+  activityId: z.uuid(),
+});
+export const CitationTurnTargetResponseSchema = z.object({
+  session: ExecutionSessionSchema,
+  turn: TurnSchema,
+});
+export const CitationActivityTargetResponseSchema = z.object({
+  sessionId: z.string().min(1),
+  turnId: z.string().nullable(),
+  activity: TimelineEventSchema,
+});
+
 export const OrganizationActivityQuerySchema = z.object({
   q: z.string().trim().min(1).max(240).optional(),
   page: z.coerce.number().int().positive().default(1),
@@ -657,6 +810,12 @@ export type ContextEvidence = z.infer<typeof ContextEvidenceSchema>;
 export type CostEstimate = z.infer<typeof CostEstimateSchema>;
 export type CapabilityEvidence = z.infer<typeof CapabilityEvidenceSchema>;
 export type RichSessionEvidence = z.infer<typeof RichSessionEvidenceSchema>;
+export type ComparisonSelection = z.infer<typeof ComparisonSelectionSchema>;
+export type ComparisonFilters = z.infer<typeof ComparisonFiltersSchema>;
+export type ComparisonClaim = z.infer<typeof ComparisonClaimSchema>;
+export type ComparisonRequest = z.infer<typeof ComparisonRequestSchema>;
+export type EvidenceCitation = z.infer<typeof EvidenceCitationSchema>;
+export type ComparisonResponse = z.infer<typeof ComparisonResponseSchema>;
 export type OrganizationActivityQuery = z.infer<
   typeof OrganizationActivityQuerySchema
 >;

@@ -2,11 +2,13 @@
 
 import {
   ApiErrorSchema,
+  ComparisonResponseSchema,
   ExecutionSessionDetailResponseSchema,
   ExamplePackImportResponseSchema,
   OrganizationActivityResponseSchema,
   browserSessionCookieName,
   type AgentRun,
+  type ComparisonResponse,
   type ExecutionSessionDetail,
   type Turn,
 } from "@workspace/contracts";
@@ -14,6 +16,7 @@ import {
 const usage = `Usage:
   loupe-diagnostic inspect <session-id> --server-url <url> --browser-session <token>
   loupe-diagnostic search [--query <text>] [--member <id>] [--repository <text>] [--include-seeded] [--page <n>] [--page-size <n>] [--json] --server-url <url> --browser-session <token>
+  loupe-diagnostic compare <session-id[:turn-id]>... --claim <statement> [--kind pattern|outcome|causal|productivity] [--include-seeded] [--json] --server-url <url> --browser-session <token>
   loupe-diagnostic examples import starter-v1 --server-url <url> --browser-session <token>
 
 Environment alternatives:
@@ -278,6 +281,124 @@ async function search(args: string[]): Promise<void> {
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
+function comparisonLabel(value: ComparisonResponse["claim"]["classification"]) {
+  return value
+    .split("_")
+    .map((part) => part[0]!.toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+async function compare(args: string[]): Promise<void> {
+  const selectionArguments: string[] = [];
+  let index = 1;
+  while (index < args.length && !args[index]!.startsWith("--")) {
+    selectionArguments.push(args[index]!);
+    index += 1;
+  }
+  if (!selectionArguments.length) {
+    throw new UsageError("The compare command requires at least one Session or Turn selection.");
+  }
+  const selections = selectionArguments.map((value) => {
+    const separator = value.indexOf(":");
+    if (separator < 0) return { scope: "session" as const, sessionId: value };
+    const sessionId = value.slice(0, separator);
+    const turnId = value.slice(separator + 1);
+    if (!sessionId || !turnId) {
+      throw new UsageError(`Invalid comparison selection: ${value}`);
+    }
+    return { scope: "turn" as const, sessionId, turnId };
+  });
+  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let includeSeeded = false;
+  let structured = false;
+  let statement: string | undefined;
+  let kind: "pattern" | "outcome" | "causal" | "productivity" = "pattern";
+  const filters: Record<string, string> = {};
+  const signals: string[] = [];
+  for (; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (flag === "--claim") {
+      statement = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--kind") {
+      const value = readValue(args, index, flag);
+      if (!["pattern", "outcome", "causal", "productivity"].includes(value)) {
+        throw new UsageError(`Invalid claim kind: ${value}`);
+      }
+      kind = value as typeof kind;
+      index += 1;
+    } else if (flag === "--signals") {
+      signals.push(
+        ...readValue(args, index, flag)
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+      );
+      index += 1;
+    } else if (flag === "--repository") {
+      filters.repository = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--include-seeded") {
+      includeSeeded = true;
+    } else if (flag === "--json") {
+      structured = true;
+    } else if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--browser-session") {
+      browserSession = readValue(args, index, flag);
+      index += 1;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  if (!statement) throw new UsageError("The compare command requires --claim.");
+  if (!browserSession) {
+    throw new UsageError(
+      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+    );
+  }
+  const endpoint = new URL("/api/v1/comparisons", parseServerUrl(serverUrl));
+  const parsed = ComparisonResponseSchema.safeParse(
+    await authenticatedJson(endpoint, browserSession, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        selections,
+        filters,
+        includeSeeded,
+        claim: { kind, statement, signals },
+      }),
+    }),
+  );
+  if (!parsed.success) {
+    throw new Error("INVALID_RESPONSE: Server returned invalid comparison data.");
+  }
+  if (structured) {
+    process.stdout.write(`${JSON.stringify(parsed.data, null, 2)}\n`);
+    return;
+  }
+  const { claim, population, completeness } = parsed.data;
+  const lines = [
+    `Comparison: ${comparisonLabel(claim.classification)}`,
+    `Claim status: ${claim.status}`,
+    `Population: ${population.selectedSessions} Sessions; ${population.selectedTurns} Turns`,
+    `Real Turns: ${population.distinctRealTurns}; Seeded Turns: ${population.seededTurns}`,
+    `Completeness: ${completeness.status} (${completeness.resolved}/${completeness.selected} selections resolved)`,
+    ...(claim.refusal
+      ? [`Refusal: ${claim.refusal.code} — ${claim.refusal.message}`]
+      : []),
+    ...claim.caveats.map((caveat) => `Caveat: ${caveat}`),
+    "Citations:",
+    ...parsed.data.citations.map(
+      (citation) =>
+        `  ${citation.synthetic === "seeded" ? "[Seeded] " : ""}${citation.sessionId}/${citation.turnId}: ${new URL(citation.links.browser, serverUrl).toString()}`,
+    ),
+  ];
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
 async function importExamples(args: string[]): Promise<void> {
   if (args[1] !== "import" || args[2] !== "starter-v1") {
     throw new UsageError("Expected examples import starter-v1.");
@@ -325,6 +446,8 @@ async function main(): Promise<void> {
   try {
     if (args[0] === "search") {
       await search(args);
+    } else if (args[0] === "compare") {
+      await compare(args);
     } else if (args[0] === "examples") {
       await importExamples(args);
     } else {

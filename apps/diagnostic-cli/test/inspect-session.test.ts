@@ -200,4 +200,103 @@ describe("spawned diagnostic CLI", () => {
     expect(result.stdout).toContain("Parent: unresolved");
     expect(result.stdout).toContain("no defensible parent observation; confidence none");
   });
+
+  it("compares selected Turns through /api/v1 and prints the evidence classification and citations", async () => {
+    let requestedUrl: string | undefined;
+    let requestedBody: unknown;
+    const server = createServer((request, response) => {
+      requestedUrl = request.url;
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        requestedBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            population: {
+              selected: [
+                { scope: "turn", sessionId: "session-a", turnId: "turn-a" },
+                { scope: "turn", sessionId: "session-b", turnId: "turn-b" },
+              ],
+              selectedSessions: 2,
+              selectedTurns: 2,
+              distinctRealTurns: 2,
+              seededTurns: 0,
+            },
+            filters: {},
+            syntheticInclusion: "excluded",
+            completeness: {
+              status: "complete",
+              selected: 2,
+              resolved: 2,
+              missing: [],
+              evidenceGaps: [],
+            },
+            subjects: [],
+            citations: [
+              {
+                id: "citation_fixture",
+                sessionId: "session-a",
+                turnId: "turn-a",
+                activityId: "55555555-5555-4555-8555-555555555555",
+                synthetic: "real",
+                evidence: {
+                  stability: ["documented", "observed"],
+                  derivation: "exact",
+                  sourceEventIds: ["55555555-5555-4555-8555-555555555555"],
+                },
+                links: {
+                  session: "/api/v1/sessions/session-a",
+                  turn: "/api/v1/sessions/session-a/turns/turn-a",
+                  activity:
+                    "/api/v1/sessions/session-a/activity/55555555-5555-4555-8555-555555555555",
+                  browser:
+                    "/?session=session-a&turn=turn-a&activity=55555555-5555-4555-8555-555555555555",
+                },
+              },
+            ],
+            claim: {
+              kind: "pattern",
+              statement: "The selected Turns used the same workflow.",
+              signals: [],
+              classification: "repeated_pattern",
+              status: "supported",
+              refusal: null,
+              caveats: ["A Repeated pattern does not establish causation."],
+            },
+          }),
+        );
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No test port");
+
+    const result = await runCli([
+      "compare",
+      "session-a:turn-a",
+      "session-b:turn-b",
+      "--claim",
+      "The selected Turns used the same workflow.",
+      "--server-url",
+      `http://127.0.0.1:${address.port}`,
+      "--browser-session",
+      "test-session-token",
+    ]);
+
+    expect(result).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(requestedUrl).toBe("/api/v1/comparisons");
+    expect(requestedBody).toMatchObject({
+      selections: [
+        { scope: "turn", sessionId: "session-a", turnId: "turn-a" },
+        { scope: "turn", sessionId: "session-b", turnId: "turn-b" },
+      ],
+      includeSeeded: false,
+      claim: { kind: "pattern" },
+    });
+    expect(result.stdout).toContain("Repeated pattern");
+    expect(result.stdout).toContain("Real Turns: 2; Seeded Turns: 0");
+    expect(result.stdout).toContain("/?session=session-a&turn=turn-a");
+  });
 });

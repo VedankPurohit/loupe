@@ -16,6 +16,12 @@ import {
   CaptureRecordAcceptedResponseSchema,
   CaptureRecordIdParamsSchema,
   CaptureRecordSchema,
+  CitationActivityTargetResponseSchema,
+  CitationTurnTargetResponseSchema,
+  ComparisonActivityParamsSchema,
+  ComparisonRequestSchema,
+  ComparisonResponseSchema,
+  ComparisonTurnParamsSchema,
   DeviceCapturePolicyResponseSchema,
   DeviceEnrollmentGrantRequestSchema,
   DeviceEnrollmentGrantResponseSchema,
@@ -835,6 +841,190 @@ export async function buildApp(options: BuildAppOptions = {}) {
         browserSession.organization.id,
         request.query,
       );
+    },
+  );
+
+  app.post(
+    "/api/v1/comparisons",
+    {
+      schema: {
+        operationId: "compareExecutionEvidence",
+        security: browserSessionOpenApiSecurity,
+        body: ComparisonRequestSchema,
+        response: {
+          200: ComparisonResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed comparisons are unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token ? await identityStore.getSession(token) : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return executionStore.compare(browserSession.organization.id, request.body);
+    },
+  );
+
+  app.get(
+    "/api/v1/sessions/:id/turns/:turnId",
+    {
+      schema: {
+        operationId: "resolveTurnEvidenceCitation",
+        security: browserSessionOpenApiSecurity,
+        params: ComparisonTurnParamsSchema,
+        response: {
+          200: CitationTurnTargetResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed evidence citations are unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token ? await identityStore.getSession(token) : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const target = await executionStore.getCitationTurn(
+        browserSession.organization.id,
+        request.params.id,
+        request.params.turnId,
+      );
+      if (!target) {
+        return reply.status(404).send({
+          error: {
+            code: "TURN_EVIDENCE_NOT_FOUND",
+            message: "The cited Turn was not found in the authorized Organization.",
+          },
+        });
+      }
+      return target;
+    },
+  );
+
+  app.get(
+    "/api/v1/sessions/:id/activity/:activityId",
+    {
+      schema: {
+        operationId: "resolveActivityEvidenceCitation",
+        security: browserSessionOpenApiSecurity,
+        params: ComparisonActivityParamsSchema,
+        response: {
+          200: CitationActivityTargetResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed evidence citations are unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token ? await identityStore.getSession(token) : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const target = await executionStore.getCitationActivity(
+        browserSession.organization.id,
+        request.params.id,
+        request.params.activityId,
+      );
+      if (!target) {
+        return reply.status(404).send({
+          error: {
+            code: "ACTIVITY_EVIDENCE_NOT_FOUND",
+            message: "The cited activity was not found in the authorized Organization.",
+          },
+        });
+      }
+      return target;
     },
   );
 

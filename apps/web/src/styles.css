@@ -84,6 +84,15 @@ button:disabled { cursor: wait; opacity: 0.65; }
 .session-picker button { display: grid; gap: 4px; min-width: 180px; margin: 0; padding: 12px; color: #31423c; text-align: left; background: #ecefe9; border: 1px solid transparent; }
 .session-picker button.selected { color: #fff; background: #1c5948; border-color: #103f33; }
 .session-picker button span { font-size: 0.75rem; }
+.comparison-panel { display: grid; gap: 14px; margin: 20px 0 30px; padding: 18px; border: 1px solid #d9dcd7; border-radius: 12px; background: #f8f8f4; }
+.comparison-panel form { grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(130px, 0.35fr) auto; align-items: end; margin: 0; }
+.comparison-panel form button { margin: 0; }
+.comparison-choices { display: grid; gap: 6px; align-self: stretch; max-height: 150px; overflow: auto; padding: 8px; border: 1px solid #d9dcd7; border-radius: 8px; background: #fff; }
+.comparison-choices .toggle { margin: 0; }
+.comparison-result { display: grid; gap: 8px; padding: 14px; border-left: 4px solid #1c5948; background: #fff; }
+.comparison-result p { margin: 0; line-height: 1.5; }
+.comparison-result small { color: #53605b; line-height: 1.45; }
+.comparison-result a { width: fit-content; color: #1c5948; font-weight: 750; }
 .inspector-content { display: grid; gap: 34px; }
 .inspector-content section { display: grid; gap: 14px; min-width: 0; }
 .inspector-content h3 { padding-bottom: 8px; border-bottom: 1px solid #d9dcd7; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -135,7 +144,7 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo
   .shell { padding: 18px; }
   .identity-row { grid-template-columns: 1fr; }
   .grant-form { grid-template-columns: 1fr; }
-  .discovery-form, .annotation-form { grid-template-columns: 1fr; }
+  .discovery-form, .annotation-form, .comparison-panel form { grid-template-columns: 1fr; }
   .device-heading { display: grid; }
   .inspector-heading { display: grid; }
   .fact-grid { grid-template-columns: 1fr; }
