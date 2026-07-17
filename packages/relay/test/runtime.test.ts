@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openDeliveryQueue } from "../src/index.js";
-import { recordCodexPayload } from "../src/runtime.js";
+import { recordCodexPayload, recordSetupVerification } from "../src/runtime.js";
+import { listActiveSessionIds } from "../src/standard-sync.js";
 
 describe("relay capture runtime", () => {
   const roots: string[] = [];
@@ -43,5 +44,27 @@ describe("relay capture runtime", () => {
     });
     expect(item?.event.redaction.applied).toBe(true);
     queue.close();
+  });
+
+  it("closes setup verification lifecycle so mandatory standards are not deferred", async () => {
+    const stateDir = join(tmpdir(), `relay-runtime-${randomUUID()}`);
+    roots.push(stateDir);
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "setup-state.json"), JSON.stringify({
+      version: 1,
+      stateDir,
+      serverUrl: "http://127.0.0.1:3000",
+      credential: "device_test",
+      fingerprintKey: Buffer.alloc(32, 7).toString("base64url"),
+      policy: { version: 1, ordinaryRedactionEnabled: true, demoCanaryEnabled: false },
+    }));
+
+    const eventIds = await recordSetupVerification({
+      stateDir,
+      sessionId: "setup-verification-test",
+    });
+
+    expect(eventIds).toHaveLength(2);
+    expect(listActiveSessionIds({ databasePath: join(stateDir, "relay.sqlite") })).toEqual([]);
   });
 });

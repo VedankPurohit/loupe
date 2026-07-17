@@ -1,0 +1,39 @@
+{
+  "name": "captured-tool-check",
+  "version": "1.0.0",
+  "reviewerContext": "Ticket 16 demonstration: review whether the skill's evidence-first shell-tool check is appropriate as a mandatory Organization standard.",
+  "uncertainty": {
+    "level": "medium",
+    "statement": "The repeated pattern is supported by two exact real Turn citations in one resumed Session; post-installation behavior and causal impact are unknown."
+  },
+  "claims": [
+    {
+      "id": "claim-two-real-turns",
+      "statement": "Two distinct real captured Turns used a shell tool during a resumed Session.",
+      "classification": "repeated_pattern",
+      "citationIds": ["evidence-turn-2", "evidence-turn-3"]
+    }
+  ],
+  "citations": [
+    {
+      "id": "evidence-turn-2",
+      "sessionId": "019f708c-df6b-73a3-b52c-77f70e7c0a4a",
+      "turnId": "019f7091-0b62-75f0-96c8-cd88b5e3bac1",
+      "activityId": "a03499e1-17ad-451b-aa66-9a770a25c03a"
+    },
+    {
+      "id": "evidence-turn-3",
+      "sessionId": "019f708c-df6b-73a3-b52c-77f70e7c0a4a",
+      "turnId": "019f7096-1eb1-7603-99d7-59f243ce68b2",
+      "activityId": "b8cbbe38-044f-4a3a-96c0-b841b1d8abe0"
+    }
+  ],
+  "package": {
+    "files": [
+      {
+        "path": "SKILL.md",
+        "content": "---\nname: captured-tool-check\ndescription: Require exact captured Turn citations before recommending a shell-tool workflow as an Organization standard.\n---\n\n# Captured tool check\n\nBefore recommending a shell-tool workflow, use the Organization Analysis CLI to cite at least two distinct real captured Turns. Keep Seeded Sessions illustrative, preserve unavailable and inferred evidence labels, and state that repeated observation does not establish causation.\n"
+      }
+    ]
+  }
+}

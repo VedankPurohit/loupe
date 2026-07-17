@@ -77,6 +77,35 @@ export async function recordCodexPayload(options: {
   }
   return event.id;
 }
+
+/** Records a bounded setup check without leaving a synthetic Session active. */
+export async function recordSetupVerification(options: {
+  stateDir: string;
+  sessionId?: string;
+}): Promise<string[]> {
+  const sessionId = options.sessionId ?? `setup-verification-${Date.now()}`;
+  const startId = await recordCodexPayload({
+    stateDir: options.stateDir,
+    source: "codex_hook",
+    producerEvent: "SessionStart",
+    payload: {
+      hook_event_name: "SessionStart",
+      session_id: sessionId,
+      source: "startup",
+    },
+  });
+  const stopId = await recordCodexPayload({
+    stateDir: options.stateDir,
+    source: "codex_hook",
+    producerEvent: "Stop",
+    payload: {
+      hook_event_name: "Stop",
+      session_id: sessionId,
+      source: "setup_verification_complete",
+    },
+  });
+  return [startId, stopId];
+}
 export async function deliverPendingOnce(options: {
   stateDir: string;
   fetch?: typeof globalThis.fetch;

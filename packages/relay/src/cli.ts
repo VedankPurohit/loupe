@@ -16,6 +16,7 @@ import { LaunchdServiceManager } from "./launchd.js";
 import {
   deliverPendingOnce,
   recordCodexPayload,
+  recordSetupVerification,
   runRelayDaemon,
 } from "./runtime.js";
 import {
@@ -140,20 +141,11 @@ async function setup(args: string[]): Promise<void> {
     enrollment,
     serviceManager: manager,
     verifyDelivery: async () => {
-      const eventId = await recordCodexPayload({
-        stateDir,
-        source: "codex_hook",
-        producerEvent: "SessionStart",
-        payload: {
-          hook_event_name: "SessionStart",
-          session_id: `setup-verification-${Date.now()}`,
-          source: "startup",
-        },
-      });
+      const eventIds = await recordSetupVerification({ stateDir });
       for (let attempt = 0; attempt < 12; attempt += 1) {
         await deliverPendingOnce({ stateDir }).catch(() => undefined);
         const queue = openDeliveryQueue({ databasePath: join(stateDir, "relay.sqlite") });
-        const pending = queue.pending().some(({ event }) => event.id === eventId);
+        const pending = queue.pending().some(({ event }) => eventIds.includes(event.id));
         queue.close();
         if (!pending) return true;
         await new Promise((resolve) => setTimeout(resolve, 250));
