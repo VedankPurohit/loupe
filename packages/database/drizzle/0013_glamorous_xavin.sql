@@ -1,0 +1,3 @@
+CREATE INDEX "execution_sessions_org_member_last_observed_idx" ON "execution_sessions" USING btree ("organization_id","owner_member_id","last_observed_at");--> statement-breakpoint
+CREATE INDEX "session_annotations_org_outcome_idx" ON "session_annotations" USING btree ("organization_id","outcome");--> statement-breakpoint
+CREATE INDEX "session_annotations_org_review_status_idx" ON "session_annotations" USING btree ("organization_id","review_status");

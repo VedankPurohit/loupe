@@ -349,7 +349,9 @@ export const ExecutionSessionSchema = z.object({
     evidence: z.literal("unavailable"),
   }),
   rootAgentRunId: z.string().min(1),
-  projectionVersion: z.literal("1"),
+  // Named projection versions evolve when source events are reprojected;
+  // consumers must tolerate values beyond the current "1".
+  projectionVersion: z.string().min(1).max(32),
   ownershipReconciliation: ReconciliationSchema,
   annotations: z.object({
     outcome: z.enum(["successful", "partial", "failed", "unknown"]),

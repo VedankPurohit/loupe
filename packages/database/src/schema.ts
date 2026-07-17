@@ -299,6 +299,11 @@ export const executionSessions = pgTable(
       table.organizationId,
       table.lastObservedAt,
     ),
+    index("execution_sessions_org_member_last_observed_idx").on(
+      table.organizationId,
+      table.ownerMemberId,
+      table.lastObservedAt,
+    ),
   ],
 );
 
@@ -326,6 +331,11 @@ export const sessionAnnotations = pgTable(
       table.canonicalSessionId,
     ),
     index("session_annotations_tags_idx").using("gin", table.tags),
+    index("session_annotations_org_outcome_idx").on(table.organizationId, table.outcome),
+    index("session_annotations_org_review_status_idx").on(
+      table.organizationId,
+      table.reviewStatus,
+    ),
   ],
 );
 
