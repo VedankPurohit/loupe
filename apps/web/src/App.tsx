@@ -42,7 +42,11 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function operationFailure(operation: string, cause: unknown) {
-  const reason = cause instanceof Error ? cause.message : "The request did not complete.";
+  console.error(`${operation} failed:`, cause);
+  const reason =
+    cause instanceof Error && !(cause instanceof TypeError) && cause.message.trim().length > 0
+      ? cause.message.trim().replace(/([^.!?])$/, "$1.")
+      : "The server could not be reached.";
   return `${operation} failed. ${reason} Check the connection and try again.`;
 }
 
@@ -68,6 +72,7 @@ export function App() {
   const [inviteError, setInviteError] = useState<RetryNotice>();
   const [examplePackStatus, setExamplePackStatus] = useState<string>();
   const [examplePackError, setExamplePackError] = useState<RetryNotice>();
+  const [logoutError, setLogoutError] = useState<RetryNotice>();
 
   async function loadDevices() {
     try {
@@ -307,13 +312,26 @@ export function App() {
 
   async function logout() {
     setFormError(undefined);
-    const response = await fetch("/api/v1/session/logout", { method: "POST" });
-    if (!response.ok) {
-      setFormError("The browser session could not be revoked. Try again.");
-      return;
+    setLogoutError(undefined);
+    try {
+      const response = await fetch("/api/v1/session/logout", { method: "POST" });
+      if (!response.ok) {
+        setLogoutError({
+          message: "The browser session could not be revoked. Try again.",
+          retryLabel: "Try logging out again",
+          retry: logout,
+        });
+        return;
+      }
+      setDevices([]);
+      setView({ kind: "established" });
+    } catch {
+      setLogoutError({
+        message: operationFailure("Logging out", new Error("The server could not be reached.")),
+        retryLabel: "Try logging out again",
+        retry: logout,
+      });
     }
-    setDevices([]);
-    setView({ kind: "established" });
   }
 
   return (
@@ -384,7 +402,7 @@ export function App() {
             >
               Log out
             </button>
-            {formError && <p role="alert" className="error">{formError}</p>}
+            {logoutError && <RetryAlert notice={logoutError} />}
           </section>
 
           <SessionInspector member={view.session.member} />

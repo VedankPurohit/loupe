@@ -87,13 +87,24 @@ function json(value: unknown) {
 }
 
 function operationFailure(operation: string, cause: unknown) {
-  const reason = cause instanceof Error ? cause.message : "The request did not complete.";
+  console.error(`${operation} failed:`, cause);
+  const reason =
+    cause instanceof Error && !(cause instanceof TypeError) && cause.message.trim().length > 0
+      ? cause.message.trim().replace(/([^.!?])$/, "$1.")
+      : "The server could not be reached.";
   return `${operation} failed. ${reason} Check the connection and try again.`;
 }
 
 const relayRedactionPlaceholders = [
   "[REDACTED:openai_api_key]",
   "[REDACTED:github_personal_access_token]",
+  "[REDACTED:aws_access_key_id]",
+  "[REDACTED:slack_token]",
+  "[REDACTED:google_api_key]",
+  "[REDACTED:stripe_secret_key]",
+  "[REDACTED:gitlab_personal_access_token]",
+  "[REDACTED:npm_access_token]",
+  "[REDACTED:pem_private_key]",
   "[REDACTED:demo_canary]",
 ] as const;
 
@@ -109,7 +120,12 @@ function containsRelayRedactionPlaceholder(value: unknown): boolean {
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch {
+    throw new TypeError("The server could not be reached.");
+  }
   if (!response.ok) {
     const body = (await response.json().catch(() => undefined)) as
       | { error?: { message?: string } }

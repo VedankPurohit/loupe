@@ -20,7 +20,7 @@ test("an operator can retry when Bootstrap redemption cannot reach the server", 
   await page.getByRole("button", { name: "Create Organization" }).click();
 
   await expect(page.getByRole("alert")).toHaveText(
-    "Redeeming the Bootstrap code failed. Failed to fetch Check the connection and try again.",
+    "Redeeming the Bootstrap code failed. The server could not be reached. Check the connection and try again.",
   );
   await expect(
     page.getByRole("button", { name: "Create Organization" }),
