@@ -38,6 +38,16 @@ Session ownership uses the same representation. The first accepted Device owns
 the durable history; later delivering Devices remain reconciliation inputs and
 cannot transfer ownership.
 
+The first acceptance uses only the authenticating Device credential and its
+server-side Member association. Owner-like source-payload fields are ignored
+for assignment. Revocation or a later enrollment cannot rewrite the retained
+owner. See [Members, historical ownership, and Git context](members-ownership-and-git-context.md)
+for the invitation and cross-device invariants.
+
+When the relay attaches a Git observation, the Session response includes the
+latest sample and its `relay_local_git` provenance. This is sample-time local
+evidence, not a claim about Git state at an earlier source-event occurrence.
+
 ## Sessions, Activity episodes, and Turns
 
 A Session is a durable resumable history. `SessionStart.source = resume` creates

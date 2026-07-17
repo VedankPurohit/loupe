@@ -3,6 +3,11 @@
 An Enrolled device is a Mac authorized for one Organization member. Enrollment
 does not copy the member's browser authority into the relay.
 
+Real people join through the separate Administrator-issued Invite-code flow;
+see [Members, historical ownership, and Git context](members-ownership-and-git-context.md).
+Redeeming an Invite creates one ordinary Member browser session. Enrolling a
+second device never creates another Member.
+
 ## Enrollment and revocation
 
 1. An authenticated member opens **Capture Settings**, names one Mac, and creates
@@ -13,6 +18,9 @@ does not copy the member's browser authority into the relay.
    separate Device credential.
 4. Revoking the Enrolled device revokes its Device credentials without revoking
    the member's browser session or deleting accepted capture history.
+
+Disconnect and re-enrollment create a new Device identity. They do not reassign
+historical Sessions; ownership remains bound to the first accepting Device.
 
 Enrollment grants are stored as salted scrypt verifiers. Device credentials and
 browser sessions are stored only as SHA-256 token digests. PostgreSQL disclosure

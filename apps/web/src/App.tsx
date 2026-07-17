@@ -26,6 +26,8 @@ export function App() {
   const [devices, setDevices] = useState<EnrolledDevice[]>([]);
   const [deviceError, setDeviceError] = useState<string>();
   const [enrollmentGrant, setEnrollmentGrant] = useState<string>();
+  const [inviteCode, setInviteCode] = useState<string>();
+  const [inviteError, setInviteError] = useState<string>();
 
   async function loadDevices() {
     const response = await fetch("/api/v1/devices");
@@ -129,6 +131,54 @@ export function App() {
       return;
     }
     setEnrollmentGrant((body as { grant: string }).grant);
+  }
+
+  async function createInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setInviteError(undefined);
+    setInviteCode(undefined);
+    const data = new FormData(event.currentTarget);
+    const response = await fetch("/api/v1/invites", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expiresInHours: Number(data.get("expiresInHours")) }),
+    });
+    const body = await readJson(response);
+    if (!response.ok) {
+      const error = body as { error?: { message?: string } } | undefined;
+      setInviteError(error?.error?.message ?? "The Invite code could not be created.");
+      return;
+    }
+    setInviteCode((body as { code: string }).code);
+  }
+
+  async function redeemInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setFormError(undefined);
+    const data = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/v1/invites/redeem", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          code: data.get("inviteCode"),
+          member: { displayName: data.get("displayName") },
+        }),
+      });
+      const body = await readJson(response);
+      if (!response.ok) {
+        const error = body as { error?: { message?: string } } | undefined;
+        setFormError(error?.error?.message ?? "The Invite code could not be redeemed.");
+        return;
+      }
+      setView({ kind: "session", session: body as AuthenticatedSessionResponse });
+      await loadDevices();
+    } catch {
+      setFormError("The application could not reach the server. Try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function updatePolicy(
@@ -239,6 +289,35 @@ export function App() {
 
           <SessionInspector />
 
+          {view.session.member.role === "administrator" && (
+            <section className="card settings-card" aria-labelledby="invite-title">
+              <p className="eyebrow">Members</p>
+              <h2 id="invite-title">Invite an ordinary Member</h2>
+              <form onSubmit={createInvite} className="grant-form">
+                <label>
+                  Expires in hours
+                  <input
+                    name="expiresInHours"
+                    type="number"
+                    min={1}
+                    max={168}
+                    defaultValue={24}
+                    required
+                  />
+                </label>
+                <button type="submit">Create Invite code</button>
+              </form>
+              {inviteCode && (
+                <div className="grant-panel">
+                  <span className="detail-label">Expiring, single-use Invite code</span>
+                  <output aria-label="Invite code">{inviteCode}</output>
+                  <p>Share it out of band. Redemption always creates a Member, never an Administrator.</p>
+                </div>
+              )}
+              {inviteError && <p role="alert" className="error">{inviteError}</p>}
+            </section>
+          )}
+
           <section className="card settings-card" aria-labelledby="devices-title">
             <p className="eyebrow">Capture Settings</p>
             <h2 id="devices-title">Enrolled devices</h2>
@@ -323,9 +402,24 @@ export function App() {
       )}
 
       {view.kind === "established" && (
-        <section className="card">
-          <h1>This Organization is already established</h1>
-          <p className="lede">Open this application from an authenticated browser.</p>
+        <section className="card" aria-labelledby="invite-redeem-title">
+          <p className="eyebrow">Join the Organization</p>
+          <h1 id="invite-redeem-title">Redeem your Invite code</h1>
+          <p className="lede">An Administrator can issue an expiring, single-use code for an ordinary Member.</p>
+          <form onSubmit={redeemInvite}>
+            <label>
+              Your display name
+              <input name="displayName" autoComplete="name" required />
+            </label>
+            <label>
+              Invite code
+              <input name="inviteCode" autoComplete="off" spellCheck={false} required />
+            </label>
+            {formError && <p role="alert" className="error">{formError}</p>}
+            <button type="submit" disabled={submitting}>
+              {submitting ? "Joining…" : "Join Organization"}
+            </button>
+          </form>
         </section>
       )}
 

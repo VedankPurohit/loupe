@@ -9,6 +9,7 @@ import type {
   AgentRun,
   ExecutionSession,
   ExecutionSessionDetail,
+  GitContextObservation,
   Reconciliation,
   Turn,
 } from "@workspace/contracts";
@@ -67,6 +68,7 @@ interface SessionState {
   canonicalId: string;
   ownerMemberId: string;
   ownerDeviceId: string;
+  gitContext: GitContextObservation | null;
   firstObservedAt: Date;
   lastObservedAt: Date;
   activityState: ExecutionSession["activityState"];
@@ -87,6 +89,7 @@ interface SourceRow {
   occurredAt: Date;
   receivedAt: Date;
   rawPayload: unknown;
+  gitContext: unknown;
 }
 
 function stableUuid(...parts: string[]): string {
@@ -255,6 +258,7 @@ function toExecutionSession(row: typeof executionSessions.$inferSelect): Executi
   return {
     id: row.canonicalSessionId,
     owner: { memberId: row.ownerMemberId, deviceId: row.ownerDeviceId },
+    gitContext: (row.gitContext as GitContextObservation | null) ?? null,
     firstObservedAt: row.firstObservedAt.toISOString(),
     lastObservedAt: row.lastObservedAt.toISOString(),
     activityState: row.activityState as ExecutionSession["activityState"],
@@ -321,6 +325,7 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
           canonicalId: sessionId,
           ownerMemberId: owner.memberId,
           ownerDeviceId: owner.deviceId,
+          gitContext: (row.gitContext as GitContextObservation | null) ?? null,
           firstObservedAt: row.occurredAt,
           lastObservedAt: row.occurredAt,
           activityState: "live",
@@ -332,6 +337,14 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
           timeline: [],
         };
         sessions.set(sessionId, session);
+      }
+      const observedGitContext = row.gitContext as GitContextObservation | null;
+      if (
+        observedGitContext &&
+        (!session.gitContext ||
+          observedGitContext.sampledAt >= session.gitContext.sampledAt)
+      ) {
+        session.gitContext = observedGitContext;
       }
       if (row.occurredAt < session.firstObservedAt) session.firstObservedAt = row.occurredAt;
       if (row.occurredAt > session.lastObservedAt) session.lastObservedAt = row.occurredAt;
@@ -521,6 +534,7 @@ export class ExecutionStore {
         occurredAt: sourceEvents.occurredAt,
         receivedAt: sourceEvents.receivedAt,
         rawPayload: sourceEvents.rawPayload,
+        gitContext: sourceEvents.gitContext,
       })
       .from(sourceEvents)
       .where(eq(sourceEvents.organizationId, device.organizationId))
@@ -538,6 +552,7 @@ export class ExecutionStore {
           canonicalSessionId: session.canonicalId,
           ownerMemberId: session.ownerMemberId,
           ownerDeviceId: session.ownerDeviceId,
+          gitContext: session.gitContext,
           firstObservedAt: session.firstObservedAt,
           lastObservedAt: session.lastObservedAt,
           activityState: session.activityState,

@@ -58,6 +58,18 @@ export const AuthenticatedSessionResponseSchema = z.object({
   member: OrganizationMemberSchema,
 });
 
+export const InviteCodeRequestSchema = z.object({
+  expiresInHours: z.number().int().min(1).max(168).optional(),
+});
+export const InviteCodeResponseSchema = z.object({
+  code: z.string(),
+  expiresAt: z.iso.datetime(),
+});
+export const InviteCodeRedeemRequestSchema = z.object({
+  code: z.string().min(1),
+  member: z.object({ displayName: z.string().trim().min(1).max(120) }),
+});
+
 export const CapturePolicySchema = z.object({
   version: z.number().int().positive(),
   ordinaryRedactionEnabled: z.boolean(),
@@ -140,6 +152,36 @@ export const CaptureRecordAcceptedResponseSchema = z.object({
 });
 export const CaptureRecordIdParamsSchema = z.object({ id: z.uuid() });
 
+export const GitContextObservationSchema = z.object({
+  status: z.enum([
+    "available",
+    "not_repository",
+    "inspection_failed",
+    "unavailable",
+  ]),
+  repositoryRoot: z.string().min(1).nullable(),
+  remoteIdentity: z.string().min(1).nullable(),
+  branch: z.string().min(1).nullable(),
+  detached: z.boolean().nullable(),
+  worktree: z.string().min(1).nullable(),
+  commit: z.string().regex(/^[0-9a-f]{40,64}$/).nullable(),
+  sampledAt: z.iso.datetime(),
+  provenance: z.object({
+    source: z.literal("relay_local_git"),
+    evidence: z.literal("local_observation"),
+    stability: z.literal("observed"),
+    derivation: z.literal("exact"),
+    cwd: z.string().min(1),
+  }),
+  reason: z
+    .enum([
+      "cwd_is_not_a_git_repository",
+      "git_inspection_failed",
+      "git_command_unavailable",
+    ])
+    .nullable(),
+});
+
 export const SourceEventSchema = z.object({
   schemaVersion: z.literal("1"),
   id: z.uuid(),
@@ -172,6 +214,7 @@ export const SourceEventSchema = z.object({
     applied: z.boolean(),
     evidence: z.array(RedactionEvidenceSchema),
   }),
+  gitContext: GitContextObservationSchema.optional(),
 });
 
 // Events stay unknown at the batch boundary so one malformed/unsupported
@@ -258,6 +301,7 @@ export const AgentRunSchema = z.object({
 export const ExecutionSessionSchema = z.object({
   id: z.string().min(1),
   owner: z.object({ memberId: z.uuid(), deviceId: z.uuid() }),
+  gitContext: GitContextObservationSchema.nullable(),
   firstObservedAt: z.iso.datetime(),
   lastObservedAt: z.iso.datetime(),
   activityState: z.enum(["live", "idle", "resumed"]),
@@ -303,6 +347,11 @@ export type BootstrapRedeemRequest = z.infer<typeof BootstrapRedeemRequestSchema
 export type AuthenticatedSessionResponse = z.infer<
   typeof AuthenticatedSessionResponseSchema
 >;
+export type InviteCodeRequest = z.infer<typeof InviteCodeRequestSchema>;
+export type InviteCodeResponse = z.infer<typeof InviteCodeResponseSchema>;
+export type InviteCodeRedeemRequest = z.infer<
+  typeof InviteCodeRedeemRequestSchema
+>;
 export type CapturePolicy = z.infer<typeof CapturePolicySchema>;
 export type EnrolledDevice = z.infer<typeof EnrolledDeviceSchema>;
 export type DeviceEnrollmentGrantRequest = z.infer<
@@ -321,6 +370,9 @@ export type UpdateDeviceCapturePolicyRequest = z.infer<
   typeof UpdateDeviceCapturePolicyRequestSchema
 >;
 export type CaptureRecord = z.infer<typeof CaptureRecordSchema>;
+export type GitContextObservation = z.infer<
+  typeof GitContextObservationSchema
+>;
 export type SourceEvent = z.infer<typeof SourceEventSchema>;
 export type SourceEventBatchResult = z.infer<typeof SourceEventBatchResultSchema>;
 export type SourceEventBatchResponse = z.infer<

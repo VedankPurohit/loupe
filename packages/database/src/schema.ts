@@ -78,6 +78,30 @@ export const browserSessions = pgTable(
   (table) => [uniqueIndex("browser_sessions_token_digest_unique").on(table.tokenDigest)],
 );
 
+export const inviteCredentials = pgTable(
+  "invite_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    issuedByMemberId: uuid("issued_by_member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    lookup: varchar("lookup", { length: 32 }).notNull(),
+    verifierSalt: varchar("verifier_salt", { length: 128 }).notNull(),
+    verifierDigest: varchar("verifier_digest", { length: 128 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("invite_credentials_lookup_unique").on(table.lookup),
+    index("invite_credentials_organization_idx").on(table.organizationId),
+  ],
+);
+
 export const deviceEnrollmentGrants = pgTable(
   "device_enrollment_grants",
   {
@@ -201,6 +225,7 @@ export const sourceEvents = pgTable(
     canonicalObservations: jsonb("canonical_observations").notNull(),
     adapter: jsonb("adapter").notNull(),
     redaction: jsonb("redaction").notNull(),
+    gitContext: jsonb("git_context"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -230,6 +255,7 @@ export const executionSessions = pgTable(
     ownerDeviceId: uuid("owner_device_id")
       .notNull()
       .references(() => enrolledDevices.id, { onDelete: "restrict" }),
+    gitContext: jsonb("git_context"),
     firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
     lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull(),
     activityState: varchar("activity_state", { length: 16 }).notNull(),

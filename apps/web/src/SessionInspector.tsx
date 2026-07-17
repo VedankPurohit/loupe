@@ -174,6 +174,8 @@ export function SessionInspector() {
             <h3 id="canonical-session-title">Canonical Session</h3>
             <dl className="fact-grid">
               <div><dt>Session identity</dt><dd><code>{detail.session.id}</code></dd></div>
+              <div><dt>Owner member</dt><dd><code>{detail.session.owner.memberId}</code></dd></div>
+              <div><dt>Owning device</dt><dd><code>{detail.session.owner.deviceId}</code></dd></div>
               <div><dt>Activity state</dt><dd>{label(detail.session.activityState)}</dd></div>
               <div><dt>Root agent identity</dt><dd><code>{detail.session.rootAgentRunId}</code></dd></div>
               <div><dt>Projection</dt><dd>Version {detail.session.projectionVersion}</dd></div>
@@ -184,6 +186,27 @@ export function SessionInspector() {
               Ownership reconciliation: {detail.session.ownershipReconciliation.rule.replaceAll("_", " ")}
               {" · "}confidence {detail.session.ownershipReconciliation.confidence}
             </p>
+            {detail.session.gitContext && (
+              <div className="git-context">
+                <h4>Relay-local Git sample</h4>
+                <p>
+                  Sampled {formatDate(detail.session.gitContext.sampledAt)} from
+                  {" "}<code>{detail.session.gitContext.provenance.cwd}</code>.
+                  This local observation is not source-reported proof of earlier Git state.
+                </p>
+                {detail.session.gitContext.status === "available" ? (
+                  <dl className="fact-grid">
+                    <div><dt>Repository root</dt><dd><code>{detail.session.gitContext.repositoryRoot}</code></dd></div>
+                    <div><dt>Remote identity</dt><dd><code>{detail.session.gitContext.remoteIdentity ?? "Unavailable"}</code></dd></div>
+                    <div><dt>Branch</dt><dd>{detail.session.gitContext.detached ? "Detached HEAD" : detail.session.gitContext.branch}</dd></div>
+                    <div><dt>Worktree</dt><dd><code>{detail.session.gitContext.worktree}</code></dd></div>
+                    <div><dt>Commit</dt><dd><code>{detail.session.gitContext.commit}</code></dd></div>
+                  </dl>
+                ) : (
+                  <p>Git context {label(detail.session.gitContext.status)}: {label(detail.session.gitContext.reason ?? "unavailable")}</p>
+                )}
+              </div>
+            )}
           </section>
 
           <section aria-labelledby="activity-title">

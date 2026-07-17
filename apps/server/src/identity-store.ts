@@ -12,6 +12,7 @@ import {
   deviceCredentials,
   deviceEnrollmentGrants,
   enrolledDevices,
+  inviteCredentials,
   organizationMembers,
   organizations,
   sourceEvents,
@@ -25,6 +26,9 @@ import type {
   DeviceEnrollmentGrantResponse,
   DeviceEnrollmentResponse,
   EnrolledDevice,
+  InviteCodeRedeemRequest,
+  InviteCodeRequest,
+  InviteCodeResponse,
   RetainedSourceEvent,
   SourceEventBatchResult,
   UpdateDeviceCapturePolicyRequest,
@@ -36,13 +40,16 @@ const browserSessionLifetimeMs = 7 * 24 * 60 * 60 * 1_000;
 const deviceEnrollmentGrantLifetimeMs = 10 * 60 * 1_000;
 const injectedBootstrapCodePattern = /^bootstrap_[A-Za-z0-9_-]{43,}$/;
 const enrollmentGrantPattern = /^enroll_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/;
+const inviteCodePattern = /^invite_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/;
 
 export class IdentityError extends Error {
   constructor(
     public readonly code:
       | "BOOTSTRAP_CODE_ALREADY_REDEEMED"
       | "BOOTSTRAP_CODE_INVALID"
-      | "DEVICE_ENROLLMENT_GRANT_INVALID",
+      | "DEVICE_ENROLLMENT_GRANT_INVALID"
+      | "INVITE_CODE_INVALID"
+      | "ADMINISTRATOR_REQUIRED",
     message: string,
   ) {
     super(message);
@@ -291,6 +298,119 @@ export class IdentityStore {
         role: session.memberRole,
       },
     };
+  }
+
+  async createInviteCode(
+    administratorId: string,
+    input: InviteCodeRequest,
+  ): Promise<InviteCodeResponse> {
+    const [administrator] = await this.database
+      .select({
+        organizationId: organizationMembers.organizationId,
+        role: organizationMembers.role,
+      })
+      .from(organizationMembers)
+      .where(eq(organizationMembers.id, administratorId))
+      .limit(1);
+    if (!administrator || administrator.role !== "administrator") {
+      throw new IdentityError(
+        "ADMINISTRATOR_REQUIRED",
+        "An Administrator browser session is required.",
+      );
+    }
+
+    const lookup = randomBytes(12).toString("base64url");
+    const code = `invite_${lookup}_${randomBytes(32).toString("base64url")}`;
+    const salt = randomBytes(24).toString("base64url");
+    const verifierDigest = (await deriveVerifier(code, salt)).toString("base64url");
+    const expiresAt = new Date(
+      Date.now() + (input.expiresInHours ?? 24) * 60 * 60 * 1_000,
+    );
+    await this.database.insert(inviteCredentials).values({
+      organizationId: administrator.organizationId,
+      issuedByMemberId: administratorId,
+      lookup,
+      verifierSalt: salt,
+      verifierDigest,
+      expiresAt,
+    });
+    return { code, expiresAt: expiresAt.toISOString() };
+  }
+
+  async redeemInviteCode(input: InviteCodeRedeemRequest): Promise<Redemption> {
+    const match = inviteCodePattern.exec(input.code);
+    if (!match) {
+      throw new IdentityError(
+        "INVITE_CODE_INVALID",
+        "The Invite code is invalid, expired, revoked, or already used.",
+      );
+    }
+
+    return this.database.transaction(async (transaction) => {
+      const [credential] = await transaction
+        .select()
+        .from(inviteCredentials)
+        .where(
+          and(
+            eq(inviteCredentials.lookup, match[1]!),
+            isNull(inviteCredentials.redeemedAt),
+            isNull(inviteCredentials.revokedAt),
+            gt(inviteCredentials.expiresAt, new Date()),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!credential) {
+        throw new IdentityError(
+          "INVITE_CODE_INVALID",
+          "The Invite code is invalid, expired, revoked, or already used.",
+        );
+      }
+
+      const expected = Buffer.from(credential.verifierDigest, "base64url");
+      const supplied = await deriveVerifier(input.code, credential.verifierSalt);
+      if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+        throw new IdentityError(
+          "INVITE_CODE_INVALID",
+          "The Invite code is invalid, expired, revoked, or already used.",
+        );
+      }
+
+      const [organization] = await transaction
+        .select({ id: organizations.id, name: organizations.name })
+        .from(organizations)
+        .where(eq(organizations.id, credential.organizationId))
+        .limit(1);
+      if (!organization) {
+        throw new IdentityError(
+          "INVITE_CODE_INVALID",
+          "The Invite code is invalid, expired, revoked, or already used.",
+        );
+      }
+      const [member] = await transaction
+        .insert(organizationMembers)
+        .values({
+          organizationId: credential.organizationId,
+          displayName: input.member.displayName,
+          role: "member",
+        })
+        .returning({
+          id: organizationMembers.id,
+          displayName: organizationMembers.displayName,
+          role: organizationMembers.role,
+        });
+      const sessionToken = `session_${randomBytes(32).toString("base64url")}`;
+      await transaction.insert(browserSessions).values({
+        memberId: member!.id,
+        tokenDigest: digestSessionToken(sessionToken),
+        expiresAt: new Date(Date.now() + browserSessionLifetimeMs),
+      });
+      await transaction
+        .update(inviteCredentials)
+        .set({ redeemedAt: new Date() })
+        .where(eq(inviteCredentials.id, credential.id));
+      return { organization, member: member!, sessionToken };
+    });
   }
 
   async createDeviceEnrollmentGrant(
@@ -668,6 +788,7 @@ export class IdentityStore {
             canonicalObservations: event.canonicalObservations,
             adapter: event.adapter,
             redaction: event.redaction,
+            gitContext: event.gitContext ?? null,
           })
           .onConflictDoNothing()
           .returning({ id: sourceEvents.id });
@@ -746,6 +867,8 @@ export class IdentityStore {
       canonicalObservations: event.canonicalObservations as unknown[],
       adapter: event.adapter as RetainedSourceEvent["adapter"],
       redaction: event.redaction as RetainedSourceEvent["redaction"],
+      gitContext:
+        (event.gitContext as RetainedSourceEvent["gitContext"]) ?? undefined,
       receivedAt: event.receivedAt.toISOString(),
       delivery: { deviceId: event.deliveringDeviceId, batchId: event.batchId },
     };

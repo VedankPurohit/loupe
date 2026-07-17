@@ -1,10 +1,213 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { promisify } from "node:util";
 
 import {
   SourceEventBatchResponseSchema,
+  type GitContextObservation,
   type SourceEvent,
 } from "@workspace/contracts";
+
+const execFile = promisify(execFileCallback);
+
+export interface GitCommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  errorCode?: string;
+}
+
+export type GitCommandRunner = (
+  args: readonly string[],
+  cwd: string,
+) => Promise<GitCommandResult>;
+
+async function runGitCommand(
+  args: readonly string[],
+  cwd: string,
+): Promise<GitCommandResult> {
+  try {
+    const result = await execFile("git", [...args], { cwd, encoding: "utf8" });
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+  } catch (error) {
+    const failure = error as Error & {
+      code?: string | number;
+      stdout?: string;
+      stderr?: string;
+    };
+    return {
+      stdout: failure.stdout ?? "",
+      stderr: failure.stderr ?? "",
+      exitCode: typeof failure.code === "number" ? failure.code : null,
+      errorCode: typeof failure.code === "string" ? failure.code : undefined,
+    };
+  }
+}
+
+function sanitizeRemoteIdentity(remote: string): string | null {
+  const candidate = remote.trim();
+  if (!candidate) return null;
+  if (candidate.includes("://")) {
+    try {
+      const parsed = new URL(candidate);
+      if (!parsed.hostname) return null;
+      return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    } catch {
+      return null;
+    }
+  }
+  const scpStyle = /^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/.exec(candidate);
+  if (scpStyle) {
+    const path = scpStyle[2]!.split(/[?#]/, 1)[0];
+    return path ? `${scpStyle[1]}:${path}` : null;
+  }
+  if (
+    candidate.startsWith("/") ||
+    candidate.startsWith("./") ||
+    candidate.startsWith("../")
+  ) {
+    return candidate;
+  }
+  return null;
+}
+
+function unavailableGitContext(
+  status: Exclude<GitContextObservation["status"], "available">,
+  reason: NonNullable<GitContextObservation["reason"]>,
+  cwd: string,
+  sampledAt: string,
+): GitContextObservation {
+  return {
+    status,
+    repositoryRoot: null,
+    remoteIdentity: null,
+    branch: null,
+    detached: null,
+    worktree: null,
+    commit: null,
+    sampledAt,
+    provenance: {
+      source: "relay_local_git",
+      evidence: "local_observation",
+      stability: "observed",
+      derivation: "exact",
+      cwd,
+    },
+    reason,
+  };
+}
+
+/**
+ * Samples Git at one point in time. This is relay-local evidence, not proof of
+ * repository state when an earlier source event originally occurred.
+ */
+export async function inspectGitContext(options: {
+  cwd: string;
+  sampledAt?: Date;
+  runGit?: GitCommandRunner;
+}): Promise<GitContextObservation> {
+  const sampledAt = (options.sampledAt ?? new Date()).toISOString();
+  const run = options.runGit ?? runGitCommand;
+  const root = await run(["rev-parse", "--show-toplevel"], options.cwd);
+  if (root.errorCode === "ENOENT") {
+    return unavailableGitContext(
+      "unavailable",
+      "git_command_unavailable",
+      options.cwd,
+      sampledAt,
+    );
+  }
+  if (root.exitCode !== 0) {
+    const isNotRepository = /not a git repository/i.test(root.stderr);
+    return unavailableGitContext(
+      isNotRepository ? "not_repository" : "inspection_failed",
+      isNotRepository
+        ? "cwd_is_not_a_git_repository"
+        : "git_inspection_failed",
+      options.cwd,
+      sampledAt,
+    );
+  }
+  const repositoryRoot = root.stdout.trim();
+  if (!repositoryRoot) {
+    return unavailableGitContext(
+      "inspection_failed",
+      "git_inspection_failed",
+      options.cwd,
+      sampledAt,
+    );
+  }
+
+  const [commitResult, branchResult, remoteResult] = await Promise.all([
+    run(["rev-parse", "HEAD"], options.cwd),
+    run(["symbolic-ref", "--quiet", "--short", "HEAD"], options.cwd),
+    run(["config", "--get", "remote.origin.url"], options.cwd),
+  ]);
+  const branchIsDetached = branchResult.exitCode === 1;
+  const remoteIsAbsent = remoteResult.exitCode === 1;
+  if (
+    commitResult.exitCode !== 0 ||
+    (branchResult.exitCode !== 0 && !branchIsDetached) ||
+    (remoteResult.exitCode !== 0 && !remoteIsAbsent)
+  ) {
+    return unavailableGitContext(
+      commitResult.errorCode === "ENOENT" ||
+        branchResult.errorCode === "ENOENT" ||
+        remoteResult.errorCode === "ENOENT"
+        ? "unavailable"
+        : "inspection_failed",
+      commitResult.errorCode === "ENOENT" ||
+        branchResult.errorCode === "ENOENT" ||
+        remoteResult.errorCode === "ENOENT"
+        ? "git_command_unavailable"
+        : "git_inspection_failed",
+      options.cwd,
+      sampledAt,
+    );
+  }
+  const commit = commitResult.stdout.trim();
+  if (!/^[0-9a-f]{40,64}$/.test(commit)) {
+    return unavailableGitContext(
+      "inspection_failed",
+      "git_inspection_failed",
+      options.cwd,
+      sampledAt,
+    );
+  }
+
+  return {
+    status: "available",
+    repositoryRoot,
+    remoteIdentity: remoteIsAbsent
+      ? null
+      : sanitizeRemoteIdentity(remoteResult.stdout),
+    branch: branchIsDetached ? null : branchResult.stdout.trim() || null,
+    detached: branchIsDetached,
+    worktree: repositoryRoot,
+    commit,
+    sampledAt,
+    provenance: {
+      source: "relay_local_git",
+      evidence: "local_observation",
+      stability: "observed",
+      derivation: "exact",
+      cwd: options.cwd,
+    },
+    reason: null,
+  };
+}
+
+export async function enrichSourceEventWithGitContext(
+  event: SourceEvent,
+  options: {
+    cwd: string;
+    sampledAt?: Date;
+    runGit?: GitCommandRunner;
+  },
+): Promise<SourceEvent> {
+  return { ...event, gitContext: await inspectGitContext(options) };
+}
 
 export interface CapturePolicy {
   version: number;

@@ -77,6 +77,8 @@ All public HTTP routes live under `/api/v1`. The initial routes are:
 - `GET /api/v1/bootstrap/status`
 - `POST /api/v1/bootstrap/redeem`
 - `GET /api/v1/session`
+- `POST /api/v1/invites` (Administrator browser session only)
+- `POST /api/v1/invites/redeem`
 - `POST /api/v1/device-enrollment-grants`
 - `POST /api/v1/device-enrollments/redeem`
 - `GET /api/v1/devices`

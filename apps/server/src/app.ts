@@ -28,6 +28,9 @@ import {
   ExecutionSessionIdParamsSchema,
   ExecutionSessionsResponseSchema,
   HealthResponseSchema,
+  InviteCodeRedeemRequestSchema,
+  InviteCodeRequestSchema,
+  InviteCodeResponseSchema,
   RetainedSourceEventSchema,
   SourceEventBatchRequestSchema,
   SourceEventBatchResponseSchema,
@@ -112,6 +115,85 @@ export async function buildApp(options: BuildAppOptions = {}) {
         });
       }
       return { status: "ok" as const, apiVersion: "v1" as const };
+    },
+  );
+
+  app.post(
+    "/api/v1/invites",
+    {
+      schema: {
+        operationId: "createInviteCode",
+        security: browserSessionOpenApiSecurity,
+        body: InviteCodeRequestSchema,
+        response: {
+          201: InviteCodeResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return reply
+        .status(201)
+        .send(await identityStore.createInviteCode(session.member.id, request.body));
+    },
+  );
+
+  app.post(
+    "/api/v1/invites/redeem",
+    {
+      schema: {
+        operationId: "redeemInviteCode",
+        body: InviteCodeRedeemRequestSchema,
+        response: {
+          201: AuthenticatedSessionResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const { sessionToken, ...session } = await identityStore.redeemInviteCode(
+        request.body,
+      );
+      return reply
+        .setCookie(browserSessionCookieName, sessionToken, {
+          httpOnly: true,
+          maxAge: 7 * 24 * 60 * 60,
+          path: "/",
+          sameSite: "lax",
+          secure: process.env.NODE_ENV === "production",
+        })
+        .status(201)
+        .send(session);
     },
   );
 
@@ -992,7 +1074,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof IdentityError) {
       const status =
-        error.code === "BOOTSTRAP_CODE_ALREADY_REDEEMED" ? 409 : 401;
+        error.code === "BOOTSTRAP_CODE_ALREADY_REDEEMED"
+          ? 409
+          : error.code === "ADMINISTRATOR_REQUIRED"
+            ? 403
+            : 401;
       return reply.status(status).send({
         error: { code: error.code, message: error.message },
       });
