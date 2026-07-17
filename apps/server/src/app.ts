@@ -25,6 +25,10 @@ import {
   DeviceHealthResponseSchema,
   EnrolledDevicesResponseSchema,
   HealthResponseSchema,
+  RetainedSourceEventSchema,
+  SourceEventBatchRequestSchema,
+  SourceEventBatchResponseSchema,
+  SourceEventIdParamsSchema,
   UpdateDeviceCapturePolicyRequestSchema,
   browserSessionCookieName,
   browserSessionOpenApiSecurity,
@@ -397,6 +401,62 @@ export async function buildApp(options: BuildAppOptions = {}) {
     },
   );
 
+  app.post(
+    "/api/v1/device/source-event-batches",
+    {
+      schema: {
+        operationId: "deliverSourceEventBatch",
+        security: deviceCredentialOpenApiSecurity,
+        body: SourceEventBatchRequestSchema,
+        response: {
+          200: SourceEventBatchResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      const token = authorization?.startsWith("Bearer ")
+        ? authorization.slice("Bearer ".length)
+        : undefined;
+      const device = token
+        ? await identityStore.authenticateDevice(token)
+        : undefined;
+      if (!device) {
+        return reply.status(401).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_REQUIRED",
+            message: "A valid Device credential is required.",
+          },
+        });
+      }
+      const results = await identityStore.persistSourceEventBatch(
+        device.id,
+        request.body.batchId,
+        request.body.events,
+      );
+      if (!results) {
+        return reply.status(401).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_REQUIRED",
+            message: "A valid Device credential is required.",
+          },
+        });
+      }
+      return { batchId: request.body.batchId, results };
+    },
+  );
+
   app.get(
     "/api/v1/device/health",
     {
@@ -505,6 +565,71 @@ export async function buildApp(options: BuildAppOptions = {}) {
         });
       }
       return capture;
+    },
+  );
+
+  app.get(
+    "/api/v1/source-events/:id",
+    {
+      schema: {
+        operationId: "getSourceEvent",
+        security: browserSessionOpenApiSecurity,
+        params: SourceEventIdParamsSchema,
+        response: {
+          200: RetainedSourceEventSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const event = await identityStore.getSourceEvent(
+        session.organization.id,
+        request.params.id,
+      );
+      if (!event) {
+        return reply.status(404).send({
+          error: {
+            code: "SOURCE_EVENT_NOT_FOUND",
+            message: "The source event was not found.",
+          },
+        });
+      }
+      return event;
     },
   );
 

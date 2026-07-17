@@ -170,3 +170,48 @@ export const capturedRecords = pgTable(
     index("captured_records_device_idx").on(table.deviceId),
   ],
 );
+
+export const sourceEvents = pgTable(
+  "source_events",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    deliveringDeviceId: uuid("delivering_device_id")
+      .notNull()
+      .references(() => enrolledDevices.id, { onDelete: "restrict" }),
+    batchId: uuid("batch_id").notNull(),
+    schemaVersion: varchar("schema_version", { length: 16 }).notNull(),
+    deduplicationKey: varchar("deduplication_key", { length: 71 }).notNull(),
+    payloadHash: varchar("payload_hash", { length: 71 }).notNull(),
+    source: varchar("source", { length: 64 }).notNull(),
+    producerName: varchar("producer_name", { length: 64 }).notNull(),
+    producerVersion: varchar("producer_version", { length: 64 }).notNull(),
+    producerEvent: text("producer_event").notNull(),
+    parserName: varchar("parser_name", { length: 128 }).notNull(),
+    parserVersion: varchar("parser_version", { length: 64 }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    capturePath: text("capture_path").notNull(),
+    rawPayload: jsonb("raw_payload").notNull(),
+    canonicalObservations: jsonb("canonical_observations").notNull(),
+    adapter: jsonb("adapter").notNull(),
+    redaction: jsonb("redaction").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("source_events_organization_dedup_unique").on(
+      table.organizationId,
+      table.deduplicationKey,
+    ),
+    index("source_events_organization_received_idx").on(
+      table.organizationId,
+      table.receivedAt,
+    ),
+    index("source_events_device_idx").on(table.deliveringDeviceId),
+  ],
+);

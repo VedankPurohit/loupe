@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual, scrypt as scryptCallback } from "node:crypto";
 import { promisify } from "node:util";
 
-import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
@@ -14,7 +14,9 @@ import {
   enrolledDevices,
   organizationMembers,
   organizations,
+  sourceEvents,
 } from "@workspace/database";
+import { SourceEventSchema } from "@workspace/contracts";
 import type {
   AuthenticatedSessionResponse,
   BootstrapRedeemRequest,
@@ -23,6 +25,8 @@ import type {
   DeviceEnrollmentGrantResponse,
   DeviceEnrollmentResponse,
   EnrolledDevice,
+  RetainedSourceEvent,
+  SourceEventBatchResult,
   UpdateDeviceCapturePolicyRequest,
 } from "@workspace/contracts";
 
@@ -576,6 +580,174 @@ export class IdentityStore {
       capturedAt: capture.capturedAt.toISOString(),
       policyVersion: capture.policyVersion,
       redactions: capture.redactions as CaptureRecord["redactions"],
+    };
+  }
+
+  async persistSourceEventBatch(
+    deviceId: string,
+    batchId: string,
+    candidates: unknown[],
+  ): Promise<SourceEventBatchResult[] | undefined> {
+    const [device] = await this.database
+      .select({
+        organizationId: enrolledDevices.organizationId,
+        memberId: enrolledDevices.memberId,
+      })
+      .from(enrolledDevices)
+      .where(
+        and(eq(enrolledDevices.id, deviceId), isNull(enrolledDevices.revokedAt)),
+      )
+      .limit(1);
+    if (!device) return undefined;
+
+    return this.database.transaction(async (transaction) => {
+      const results: SourceEventBatchResult[] = [];
+      for (const candidate of candidates) {
+        const eventId =
+          typeof candidate === "object" &&
+          candidate !== null &&
+          "id" in candidate &&
+          typeof candidate.id === "string"
+            ? candidate.id
+            : `invalid-event-${results.length + 1}`;
+        const parsed = SourceEventSchema.safeParse(candidate);
+        if (!parsed.success) {
+          const unsupportedVersion =
+            typeof candidate === "object" &&
+            candidate !== null &&
+            "schemaVersion" in candidate &&
+            candidate.schemaVersion !== "1";
+          results.push({
+            eventId,
+            status: "rejected",
+            retryable: false,
+            code: unsupportedVersion
+              ? "SOURCE_EVENT_UNSUPPORTED_SCHEMA_VERSION"
+              : "SOURCE_EVENT_INVALID",
+            message: unsupportedVersion
+              ? "The source-event schema version is not supported."
+              : "The source event did not match the ingestion contract.",
+          });
+          continue;
+        }
+        const event = parsed.data;
+        const computedPayloadHash = `sha256:${createHash("sha256")
+          .update(JSON.stringify(event.rawPayload))
+          .digest("hex")}`;
+        if (computedPayloadHash !== event.payloadHash) {
+          results.push({
+            eventId: event.id,
+            status: "rejected",
+            retryable: false,
+            code: "SOURCE_EVENT_PAYLOAD_HASH_MISMATCH",
+            message: "The source payload does not match its integrity evidence.",
+          });
+          continue;
+        }
+        const inserted = await transaction
+          .insert(sourceEvents)
+          .values({
+            id: event.id,
+            organizationId: device.organizationId,
+            memberId: device.memberId,
+            deliveringDeviceId: deviceId,
+            batchId,
+            schemaVersion: event.schemaVersion,
+            deduplicationKey: event.deduplicationKey,
+            payloadHash: event.payloadHash,
+            source: event.source,
+            producerName: event.producer.name,
+            producerVersion: event.producer.version,
+            producerEvent: event.producer.event,
+            parserName: event.parser.name,
+            parserVersion: event.parser.version,
+            occurredAt: new Date(event.occurredAt),
+            capturedAt: new Date(event.capturedAt),
+            capturePath: event.capturePath,
+            rawPayload: event.rawPayload,
+            canonicalObservations: event.canonicalObservations,
+            adapter: event.adapter,
+            redaction: event.redaction,
+          })
+          .onConflictDoNothing()
+          .returning({ id: sourceEvents.id });
+        if (inserted.length === 1) {
+          results.push({ eventId: event.id, status: "accepted" });
+          continue;
+        }
+        const [existing] = await transaction
+          .select({
+            id: sourceEvents.id,
+            deduplicationKey: sourceEvents.deduplicationKey,
+            payloadHash: sourceEvents.payloadHash,
+          })
+          .from(sourceEvents)
+          .where(
+            and(
+              eq(sourceEvents.organizationId, device.organizationId),
+              or(
+                eq(sourceEvents.id, event.id),
+                eq(sourceEvents.deduplicationKey, event.deduplicationKey),
+              ),
+            ),
+          )
+          .limit(1);
+        if (
+          existing?.id === event.id &&
+          existing.deduplicationKey === event.deduplicationKey &&
+          existing.payloadHash === event.payloadHash
+        ) {
+          results.push({ eventId: event.id, status: "duplicate" });
+        } else {
+          results.push({
+            eventId: event.id,
+            status: "rejected",
+            retryable: false,
+            code: "SOURCE_EVENT_DEDUPLICATION_CONFLICT",
+            message: "Delivery identity was already used for different evidence.",
+          });
+        }
+      }
+      return results;
+    });
+  }
+
+  async getSourceEvent(
+    organizationId: string,
+    eventId: string,
+  ): Promise<RetainedSourceEvent | undefined> {
+    const [event] = await this.database
+      .select()
+      .from(sourceEvents)
+      .where(
+        and(
+          eq(sourceEvents.id, eventId),
+          eq(sourceEvents.organizationId, organizationId),
+        ),
+      )
+      .limit(1);
+    if (!event) return undefined;
+    return {
+      schemaVersion: "1",
+      id: event.id,
+      deduplicationKey: event.deduplicationKey,
+      payloadHash: event.payloadHash,
+      source: event.source as RetainedSourceEvent["source"],
+      producer: {
+        name: "codex",
+        version: event.producerVersion,
+        event: event.producerEvent,
+      },
+      parser: { name: event.parserName, version: event.parserVersion },
+      occurredAt: event.occurredAt.toISOString(),
+      capturedAt: event.capturedAt.toISOString(),
+      capturePath: event.capturePath,
+      rawPayload: event.rawPayload as Record<string, unknown>,
+      canonicalObservations: event.canonicalObservations as unknown[],
+      adapter: event.adapter as RetainedSourceEvent["adapter"],
+      redaction: event.redaction as RetainedSourceEvent["redaction"],
+      receivedAt: event.receivedAt.toISOString(),
+      delivery: { deviceId: event.deliveringDeviceId, batchId: event.batchId },
     };
   }
 }

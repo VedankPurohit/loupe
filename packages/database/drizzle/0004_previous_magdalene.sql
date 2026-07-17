@@ -1,0 +1,1 @@
+ALTER TABLE "source_events" ADD COLUMN "adapter" jsonb NOT NULL;

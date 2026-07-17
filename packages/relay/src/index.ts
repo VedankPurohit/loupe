@@ -1,3 +1,11 @@
+import { createHmac, randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+
+import {
+  SourceEventBatchResponseSchema,
+  type SourceEvent,
+} from "@workspace/contracts";
+
 export interface CapturePolicy {
   version: number;
   ordinaryRedactionEnabled: boolean;
@@ -170,5 +178,210 @@ export function openCaptureQueue(options: {
     },
   };
 }
-import { createHmac } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+
+export interface DeliveryQueueItem {
+  event: SourceEvent;
+  state: "pending" | "poisoned";
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+}
+
+export interface DeliveryAttempt {
+  sent: number;
+  acknowledged: number;
+  retrying: number;
+  poisoned: number;
+}
+
+export interface DeliveryQueue {
+  record(event: SourceEvent): { eventId: string; status: "pending" | "duplicate" };
+  pending(): DeliveryQueueItem[];
+  deliverOnce(options: {
+    baseUrl: string;
+    deviceCredential: string;
+    batchSize?: number;
+    now?: Date;
+    fetch?: typeof globalThis.fetch;
+  }): Promise<DeliveryAttempt>;
+  close(): void;
+}
+
+interface DeliveryRow {
+  id: string;
+  event_json: string;
+  state: "pending" | "poisoned";
+  attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+}
+
+function toDeliveryItem(row: DeliveryRow): DeliveryQueueItem {
+  return {
+    event: JSON.parse(row.event_json) as SourceEvent,
+    state: row.state,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+    lastError: row.last_error,
+  };
+}
+
+/**
+ * Opens the relay's durable local queue. Recording is synchronous; network
+ * access begins only when the caller separately invokes `deliverOnce`.
+ */
+export function openDeliveryQueue(options: { databasePath: string }): DeliveryQueue {
+  const database = new DatabaseSync(options.databasePath);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS source_event_delivery_queue (
+      id TEXT PRIMARY KEY,
+      deduplication_key TEXT NOT NULL UNIQUE,
+      event_json TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'poisoned')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT,
+      last_error TEXT
+    ) STRICT
+  `);
+  const insert = database.prepare(`
+    INSERT OR IGNORE INTO source_event_delivery_queue (
+      id, deduplication_key, event_json
+    ) VALUES (?, ?, ?)
+  `);
+  const selectById = database.prepare(`
+    SELECT id, event_json, state, attempts, next_attempt_at, last_error
+    FROM source_event_delivery_queue WHERE id = ?
+  `);
+  const selectAll = database.prepare(`
+    SELECT id, event_json, state, attempts, next_attempt_at, last_error
+    FROM source_event_delivery_queue ORDER BY rowid
+  `);
+  const selectDue = database.prepare(`
+    SELECT id, event_json, state, attempts, next_attempt_at, last_error
+    FROM source_event_delivery_queue
+    WHERE state = 'pending'
+      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+    ORDER BY rowid LIMIT ?
+  `);
+  const remove = database.prepare(
+    "DELETE FROM source_event_delivery_queue WHERE id = ?",
+  );
+  const retry = database.prepare(`
+    UPDATE source_event_delivery_queue
+    SET attempts = attempts + 1, next_attempt_at = ?, last_error = ?
+    WHERE id = ?
+  `);
+  const poison = database.prepare(`
+    UPDATE source_event_delivery_queue
+    SET state = 'poisoned', attempts = attempts + 1,
+        next_attempt_at = NULL, last_error = ?
+    WHERE id = ?
+  `);
+
+  const retryAt = (attempts: number, now: Date) =>
+    new Date(
+      now.getTime() + Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6)),
+    ).toISOString();
+
+  return {
+    record(event) {
+      const serialized = JSON.stringify(event);
+      const result = insert.run(event.id, event.deduplicationKey, serialized);
+      if (result.changes === 1) return { eventId: event.id, status: "pending" };
+      const existing = selectById.get(event.id) as DeliveryRow | undefined;
+      if (!existing || existing.event_json !== serialized) {
+        throw new Error("Delivery identity conflicts with different source evidence.");
+      }
+      return { eventId: event.id, status: "duplicate" };
+    },
+    pending() {
+      return (selectAll.all() as unknown as DeliveryRow[]).map(toDeliveryItem);
+    },
+    async deliverOnce(deliveryOptions) {
+      const now = deliveryOptions.now ?? new Date();
+      const batchSize = Math.max(1, Math.min(deliveryOptions.batchSize ?? 100, 100));
+      const rows = selectDue.all(now.toISOString(), batchSize) as unknown as DeliveryRow[];
+      if (rows.length === 0) {
+        return { sent: 0, acknowledged: 0, retrying: 0, poisoned: 0 };
+      }
+      const batchId = randomUUID();
+      const events = rows.map((row) => toDeliveryItem(row).event);
+      let response: Response;
+      try {
+        response = await (deliveryOptions.fetch ?? globalThis.fetch)(
+          `${deliveryOptions.baseUrl.replace(/\/$/, "")}/api/v1/device/source-event-batches`,
+          {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${deliveryOptions.deviceCredential}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ batchId, events }),
+          },
+        );
+        if (!response.ok) throw new Error(`DELIVERY_HTTP_${response.status}`);
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "DELIVERY_NETWORK_ERROR";
+        for (const row of rows) retry.run(retryAt(row.attempts, now), code, row.id);
+        return {
+          sent: rows.length,
+          acknowledged: 0,
+          retrying: rows.length,
+          poisoned: 0,
+        };
+      }
+
+      let acknowledgement;
+      try {
+        acknowledgement = SourceEventBatchResponseSchema.parse(await response.json());
+        if (acknowledgement.batchId !== batchId) {
+          throw new Error("Acknowledgement batch identity mismatch.");
+        }
+      } catch {
+        for (const row of rows) {
+          retry.run(retryAt(row.attempts, now), "ACKNOWLEDGEMENT_INVALID", row.id);
+        }
+        return {
+          sent: rows.length,
+          acknowledged: 0,
+          retrying: rows.length,
+          poisoned: 0,
+        };
+      }
+
+      const results = new Map(
+        acknowledgement.results.map((result) => [result.eventId, result]),
+      );
+      let acknowledged = 0;
+      let retryingCount = 0;
+      let poisonedCount = 0;
+      for (const row of rows) {
+        const result = results.get(row.id);
+        if (result?.status === "accepted" || result?.status === "duplicate") {
+          remove.run(row.id);
+          acknowledged += 1;
+        } else if (result?.status === "rejected" && result.retryable === false) {
+          poison.run(result.code ?? "SOURCE_EVENT_REJECTED", row.id);
+          poisonedCount += 1;
+        } else {
+          retry.run(
+            retryAt(row.attempts, now),
+            result?.code ?? "ACKNOWLEDGEMENT_MISSING",
+            row.id,
+          );
+          retryingCount += 1;
+        }
+      }
+      return {
+        sent: rows.length,
+        acknowledged,
+        retrying: retryingCount,
+        poisoned: poisonedCount,
+      };
+    },
+    close() {
+      database.close();
+    },
+  };
+}

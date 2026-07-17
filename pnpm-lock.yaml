@@ -57,6 +57,9 @@ importers:
       '@types/node':
         specifier: 24.0.15
         version: 24.0.15
+      '@workspace/agent-adapter':
+        specifier: workspace:*
+        version: link:../../packages/agent-adapter
       '@workspace/relay':
         specifier: workspace:*
         version: link:../../packages/relay
@@ -92,6 +95,19 @@ importers:
         specifier: 7.0.6
         version: 7.0.6(@types/node@24.0.15)(tsx@4.20.3)(yaml@2.9.0)
 
+  packages/agent-adapter:
+    dependencies:
+      '@workspace/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 24.0.15
+        version: 24.0.15
+      vitest:
+        specifier: 3.2.4
+        version: 3.2.4(@types/node@24.0.15)(tsx@4.20.3)(yaml@2.9.0)
+
   packages/contracts:
     dependencies:
       zod:
@@ -118,6 +134,10 @@ importers:
         version: 4.20.3
 
   packages/relay:
+    dependencies:
+      '@workspace/contracts':
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       '@types/node':
         specifier: 24.0.15
