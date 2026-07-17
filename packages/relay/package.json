@@ -8,12 +8,16 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "coding-agent-relay": "./dist/cli.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@workspace/agent-adapter": "workspace:*",
     "@workspace/contracts": "workspace:*"
   },
   "devDependencies": {

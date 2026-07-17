@@ -79,4 +79,40 @@ describe("relay delivery queue", () => {
     expect(queue.pending()).toEqual([]);
     queue.close();
   });
+
+  it("recovers a lost acknowledgement without persisting the accepted event twice", async () => {
+    const databasePath = join(tmpdir(), `delivery-${randomUUID()}.sqlite`);
+    paths.push(databasePath);
+    const sourceEvent = event();
+    const accepted = new Set<string>();
+    const queue = openDeliveryQueue({ databasePath });
+    queue.record(sourceEvent);
+
+    await queue.deliverOnce({
+      baseUrl: "http://central.test",
+      deviceCredential: "device_test",
+      now: new Date("2026-07-17T10:00:00.000Z"),
+      fetch: async () => {
+        accepted.add(sourceEvent.id);
+        throw new Error("ACK_INTERRUPTED_AFTER_ACCEPT");
+      },
+    });
+    const retried = await queue.deliverOnce({
+      baseUrl: "http://central.test",
+      deviceCredential: "device_test",
+      now: new Date("2026-07-17T10:01:00.000Z"),
+      fetch: async (_input, init) => {
+        const request = JSON.parse(init!.body as string) as { batchId: string };
+        return new Response(JSON.stringify({
+          batchId: request.batchId,
+          results: [{ eventId: sourceEvent.id, status: "duplicate" }],
+        }));
+      },
+    });
+
+    expect(retried.acknowledged).toBe(1);
+    expect(accepted).toEqual(new Set([sourceEvent.id]));
+    expect(queue.pending()).toEqual([]);
+    queue.close();
+  });
 });

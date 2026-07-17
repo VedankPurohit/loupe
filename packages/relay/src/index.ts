@@ -270,7 +270,7 @@ const demoRule: RedactionRule = {
   pattern: /(?<![A-Za-z0-9_])demo_redaction_canary_[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/g,
 };
 
-function redact(
+export function redactCaptureInput(
   input: CaptureInput,
   policy: CapturePolicy,
   fingerprintKey: Uint8Array,
@@ -353,7 +353,7 @@ export function openCaptureQueue(options: {
 
   return {
     capture(input, policy) {
-      const captured = redact(input, policy, options.fingerprintKey);
+      const captured = redactCaptureInput(input, policy, options.fingerprintKey);
       insert.run(
         captured.id,
         captured.source,
@@ -435,6 +435,7 @@ function toDeliveryItem(row: DeliveryRow): DeliveryQueueItem {
  */
 export function openDeliveryQueue(options: { databasePath: string }): DeliveryQueue {
   const database = new DatabaseSync(options.databasePath);
+  database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
   database.exec(`
     CREATE TABLE IF NOT EXISTS source_event_delivery_queue (
       id TEXT PRIMARY KEY,
@@ -588,3 +589,7 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
     },
   };
 }
+
+export * from "./launchd.js";
+export * from "./runtime.js";
+export * from "./setup.js";

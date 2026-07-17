@@ -21,7 +21,7 @@ The `VedankPurohit/loupe` repository returned no existing project when checked o
 
 Loupe has a build-ready specification and a 16-ticket local implementation plan. Codex on macOS is the first planned live integration. The implementation must prove a real path from one-time setup through local capture, durable delivery, PostgreSQL persistence, near-real-time browser inspection, and scoped agent analysis.
 
-The runnable TypeScript workspace, PostgreSQL schema, versioned server API, React application, first-Administrator Bootstrap journey, scoped device enrollment, capture Settings, and local pre-persistence redaction are now established. The capture adapter and full delivery/projection pipeline follow in later implementation tickets.
+The runnable TypeScript workspace, PostgreSQL schema, versioned server API, React application, first-Administrator Bootstrap journey, scoped device enrollment, capture Settings, local pre-persistence redaction, Codex adapter, reliable delivery, live projection, and reversible macOS relay setup are now established.
 
 ## Native development quickstart
 
@@ -162,6 +162,7 @@ The Playwright harness owns a disposable `agent_observer_playwright` database, c
 - [`docs/adapter-and-delivery.md`](./docs/adapter-and-delivery.md) — Codex adapter capabilities, immutable source-event envelopes, durable queueing, batch acknowledgements, retries, replay, and delivery troubleshooting.
 - [`docs/live-execution.md`](./docs/live-execution.md) — canonical Session/Turn/Agent identities, Activity episodes, replay and reconciliation, query contracts, SSE recovery, and parentage limits.
 - [`docs/session-evidence.md`](./docs/session-evidence.md) — Tool and lifecycle coverage, Token categories and Turn association, Context methods, versioned estimated cost, capability gaps, and refusal language.
+- [`docs/macos-codex-setup.md`](./docs/macos-codex-setup.md) — setup preview and consent, `launchd`, configuration backup/restore, disconnect, uninstall, recovery, and the executable first-day checkpoint.
 - [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.
 - [Build-ready specification](./.scratch/coding-agent-observability/spec.md) — normative product, architecture, testing, and acceptance strategy.
 - [Implementation tickets](./.scratch/coding-agent-observability-implementation/issues/) — 16 typed, test-planned work packages with explicit blockers and documentation obligations.

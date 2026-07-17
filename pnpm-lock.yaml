@@ -151,6 +151,9 @@ importers:
 
   packages/relay:
     dependencies:
+      '@workspace/agent-adapter':
+        specifier: workspace:*
+        version: link:../agent-adapter
       '@workspace/contracts':
         specifier: workspace:*
         version: link:../contracts
