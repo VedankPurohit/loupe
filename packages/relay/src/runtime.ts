@@ -160,6 +160,81 @@ async function requestBody(request: import("node:http").IncomingMessage): Promis
   return parsed as Record<string, unknown>;
 }
 
+interface OtlpRecord {
+  producerEvent: string;
+  payload: Record<string, unknown>;
+  occurredAt?: string;
+}
+
+function otlpAttribute(record: unknown, wanted: string): string | undefined {
+  const attributes = (record as { attributes?: unknown })?.attributes;
+  if (!Array.isArray(attributes)) return undefined;
+  for (const item of attributes) {
+    const attribute = item as { key?: unknown; value?: Record<string, unknown> };
+    if (attribute?.key !== wanted) continue;
+    const scalar = attribute.value?.stringValue ?? attribute.value?.intValue;
+    if (typeof scalar === "string" || typeof scalar === "number") return String(scalar);
+  }
+  return undefined;
+}
+
+/**
+ * Splits a real OTLP export envelope into individual records so every source
+ * event carries exactly one log record or span — the shape the adapter and
+ * server projection consume. An unrecognizable body falls back to one
+ * whole-envelope event rather than dropping evidence.
+ */
+export function splitOtlpEnvelope(
+  kind: "logs" | "traces",
+  body: Record<string, unknown>,
+): OtlpRecord[] {
+  const records: OtlpRecord[] = [];
+  if (kind === "logs") {
+    for (const resource of asArray(body.resourceLogs ?? body.resource_logs)) {
+      const scopes = asArray(
+        (resource as Record<string, unknown>).scopeLogs ??
+          (resource as Record<string, unknown>).scope_logs,
+      );
+      for (const scope of scopes) {
+        const logRecords = asArray(
+          (scope as Record<string, unknown>).logRecords ??
+            (scope as Record<string, unknown>).log_records,
+        );
+        for (const record of logRecords) {
+          records.push({
+            producerEvent: otlpAttribute(record, "event.name") ?? "otlp.logs",
+            payload: { log_record: record as Record<string, unknown> },
+            occurredAt: otlpAttribute(record, "event.timestamp"),
+          });
+        }
+      }
+    }
+  } else {
+    for (const resource of asArray(body.resourceSpans ?? body.resource_spans)) {
+      const scopes = asArray(
+        (resource as Record<string, unknown>).scopeSpans ??
+          (resource as Record<string, unknown>).scope_spans,
+      );
+      for (const scope of scopes) {
+        for (const span of asArray((scope as Record<string, unknown>).spans)) {
+          const name = (span as { name?: unknown }).name;
+          records.push({
+            producerEvent: typeof name === "string" && name.length > 0 ? name : "otlp.traces",
+            payload: { span: span as Record<string, unknown> },
+          });
+        }
+      }
+    }
+  }
+  return records.length > 0
+    ? records
+    : [{ producerEvent: `otlp.${kind}`, payload: body }];
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 export function createOtlpReceiver(options: { stateDir: string }): Server {
   return createServer(async (request, response) => {
     try {
@@ -168,12 +243,15 @@ export function createOtlpReceiver(options: { stateDir: string }): Server {
         return;
       }
       const kind = request.url === "/v1/logs" ? "logs" : "traces";
-      await recordCodexPayload({
-        stateDir: options.stateDir,
-        source: kind === "logs" ? "codex_otel_log" : "codex_otel_trace",
-        producerEvent: `otlp.${kind}`,
-        payload: await requestBody(request),
-      });
+      for (const record of splitOtlpEnvelope(kind, await requestBody(request))) {
+        await recordCodexPayload({
+          stateDir: options.stateDir,
+          source: kind === "logs" ? "codex_otel_log" : "codex_otel_trace",
+          producerEvent: record.producerEvent,
+          payload: record.payload,
+          occurredAt: record.occurredAt,
+        });
+      }
       response.writeHead(200, { "content-type": "application/json" }).end("{}\n");
     } catch (error) {
       const message = error instanceof Error ? error.message : "capture failed";

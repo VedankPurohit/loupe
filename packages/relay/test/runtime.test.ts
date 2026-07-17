@@ -6,7 +6,11 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openDeliveryQueue } from "../src/index.js";
-import { recordCodexPayload, recordSetupVerification } from "../src/runtime.js";
+import {
+  recordCodexPayload,
+  recordSetupVerification,
+  splitOtlpEnvelope,
+} from "../src/runtime.js";
 import { listActiveSessionIds } from "../src/standard-sync.js";
 
 describe("relay capture runtime", () => {
@@ -75,6 +79,53 @@ describe("relay capture runtime", () => {
     expect(item?.event.adapter.status).toBe("downgraded");
     expect(item?.event.rawPayload).toMatchObject({ session_id: "session-v" });
     queue.close();
+  });
+
+  it("splits an OTLP export into one source record per log record or span", () => {
+    const logs = splitOtlpEnvelope("logs", {
+      resourceLogs: [
+        {
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  attributes: [
+                    { key: "event.name", value: { stringValue: "codex.sse_event" } },
+                    { key: "event.timestamp", value: { stringValue: "2026-07-17T12:00:00Z" } },
+                    { key: "input_token_count", value: { stringValue: "14542" } },
+                  ],
+                },
+                {
+                  attributes: [
+                    { key: "event.name", value: { stringValue: "codex.api_request" } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(logs).toHaveLength(2);
+    expect(logs[0]).toMatchObject({
+      producerEvent: "codex.sse_event",
+      occurredAt: "2026-07-17T12:00:00Z",
+    });
+    expect(logs[0]?.payload).toHaveProperty("log_record");
+    expect(logs[1]?.producerEvent).toBe("codex.api_request");
+
+    const traces = splitOtlpEnvelope("traces", {
+      resourceSpans: [
+        { scopeSpans: [{ spans: [{ name: "codex.request" }, { name: "turn" }] }] },
+      ],
+    });
+    expect(traces.map((record) => record.producerEvent)).toEqual(["codex.request", "turn"]);
+    expect(traces[0]?.payload).toHaveProperty("span");
+
+    // Unrecognizable bodies fall back to one whole-envelope event.
+    expect(splitOtlpEnvelope("logs", { unexpected: true })).toEqual([
+      { producerEvent: "otlp.logs", payload: { unexpected: true } },
+    ]);
   });
 
   it("closes setup verification lifecycle so mandatory standards are not deferred", async () => {
