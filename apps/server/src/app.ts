@@ -27,14 +27,20 @@ import {
   ExecutionSessionDetailResponseSchema,
   ExecutionSessionIdParamsSchema,
   ExecutionSessionsResponseSchema,
+  ExamplePackImportResponseSchema,
+  ExamplePackParamsSchema,
   HealthResponseSchema,
   InviteCodeRedeemRequestSchema,
   InviteCodeRequestSchema,
   InviteCodeResponseSchema,
+  OrganizationActivityQuerySchema,
+  OrganizationActivityResponseSchema,
   RetainedSourceEventSchema,
   SourceEventBatchRequestSchema,
   SourceEventBatchResponseSchema,
   SourceEventIdParamsSchema,
+  SessionAnnotationRequestSchema,
+  SessionAnnotationResponseSchema,
   UpdateDeviceCapturePolicyRequestSchema,
   browserSessionCookieName,
   browserSessionOpenApiSecurity,
@@ -776,6 +782,173 @@ export async function buildApp(options: BuildAppOptions = {}) {
       },
     });
   };
+
+  app.get(
+    "/api/v1/organization/activity",
+    {
+      schema: {
+        operationId: "searchOrganizationActivity",
+        security: browserSessionOpenApiSecurity,
+        querystring: OrganizationActivityQuerySchema,
+        response: {
+          200: OrganizationActivityResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Organization activity is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token ? await identityStore.getSession(token) : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return executionStore.searchActivity(
+        browserSession.organization.id,
+        request.query,
+      );
+    },
+  );
+
+  app.patch(
+    "/api/v1/sessions/:id/annotations",
+    {
+      schema: {
+        operationId: "annotateExecutionSession",
+        security: browserSessionOpenApiSecurity,
+        params: ExecutionSessionIdParamsSchema,
+        body: SessionAnnotationRequestSchema,
+        response: {
+          200: SessionAnnotationResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Session annotations are unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token ? await identityStore.getSession(token) : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const annotation = await executionStore.annotateSession(
+        browserSession.organization.id,
+        request.params.id,
+        browserSession.member,
+        request.body,
+      );
+      if (annotation === "forbidden") {
+        return reply.status(403).send({
+          error: {
+            code: "SESSION_ANNOTATION_FORBIDDEN",
+            message: "Only the Session owner or an Administrator can annotate this Session.",
+          },
+        });
+      }
+      if (!annotation) {
+        return reply.status(404).send({
+          error: {
+            code: "EXECUTION_SESSION_NOT_FOUND",
+            message: "The Session was not found.",
+          },
+        });
+      }
+      return annotation;
+    },
+  );
+
+  app.post(
+    "/api/v1/administration/example-packs/:version/import",
+    {
+      schema: {
+        operationId: "importExamplePack",
+        security: browserSessionOpenApiSecurity,
+        params: ExamplePackParamsSchema,
+        response: {
+          200: ExamplePackImportResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !executionStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed Example data is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const browserSession = token ? await identityStore.getSession(token) : undefined;
+      if (!browserSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      if (browserSession.member.role !== "administrator") {
+        return reply.status(403).send({
+          error: {
+            code: "ADMINISTRATOR_REQUIRED",
+            message: "Administrator authority is required.",
+          },
+        });
+      }
+      return executionStore.importExamplePack(
+        browserSession.organization.id,
+        browserSession.member.id,
+        request.params.version,
+      );
+    },
+  );
 
   app.get(
     "/api/v1/sessions",

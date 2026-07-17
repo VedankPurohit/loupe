@@ -36,3 +36,22 @@ pnpm --filter @workspace/diagnostic-cli exec tsx src/cli.ts inspect '<session-id
 The command exits `0` on a valid Session response, `1` for HTTP/API/contract
 failures, and `2` for invalid arguments. It never treats inactivity, a Stop
 event, or an unresolved parent edge as a completed Session.
+
+## Search and explicit Example data
+
+Search Organization activity through the same `/api/v1` PostgreSQL query used
+by the browser. Seeded examples stay excluded unless explicitly included:
+
+```bash
+pnpm --filter @workspace/diagnostic-cli diagnostic search \
+  --query compilation --repository acme/project
+pnpm --filter @workspace/diagnostic-cli diagnostic search \
+  --include-seeded --page 1 --page-size 25 --json
+```
+
+Administrators can explicitly and idempotently load the versioned starter
+Example pack through the separate server-controlled path:
+
+```bash
+pnpm --filter @workspace/diagnostic-cli diagnostic examples import starter-v1
+```

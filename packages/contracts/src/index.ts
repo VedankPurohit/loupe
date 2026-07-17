@@ -300,7 +300,8 @@ export const AgentRunSchema = z.object({
 
 export const ExecutionSessionSchema = z.object({
   id: z.string().min(1),
-  owner: z.object({ memberId: z.uuid(), deviceId: z.uuid() }),
+  owner: z.object({ memberId: z.uuid(), deviceId: z.uuid().nullable() }),
+  ownerProfile: z.object({ displayName: z.string(), isExample: z.boolean() }),
   gitContext: GitContextObservationSchema.nullable(),
   firstObservedAt: z.iso.datetime(),
   lastObservedAt: z.iso.datetime(),
@@ -312,6 +313,17 @@ export const ExecutionSessionSchema = z.object({
   rootAgentRunId: z.string().min(1),
   projectionVersion: z.literal("1"),
   ownershipReconciliation: ReconciliationSchema,
+  annotations: z.object({
+    outcome: z.enum(["successful", "partial", "failed", "unknown"]),
+    reviewStatus: z.enum(["exemplar", "needs_help", "ordinary"]),
+    tags: z.array(z.string()),
+    updatedAt: z.iso.datetime().nullable(),
+  }),
+  synthetic: z.object({
+    kind: z.enum(["real", "seeded"]),
+    examplePackVersion: z.string().nullable(),
+  }),
+  deepLink: z.string().min(1),
 });
 
 export const ExecutionSessionsResponseSchema = z.object({
@@ -466,6 +478,123 @@ export const ExecutionSessionDetailResponseSchema = z.object({
   evidence: RichSessionEvidenceSchema,
 });
 
+export const OrganizationActivityQuerySchema = z.object({
+  q: z.string().trim().min(1).max(240).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  includeSeeded: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  from: z.iso.datetime().optional(),
+  to: z.iso.datetime().optional(),
+  memberId: z.uuid().optional(),
+  repository: z.string().trim().min(1).max(240).optional(),
+  activityState: z.enum(["live", "idle", "resumed"]).optional(),
+  outcome: z.enum(["successful", "partial", "failed", "unknown"]).optional(),
+  reviewStatus: z.enum(["exemplar", "needs_help", "ordinary"]).optional(),
+  tag: z.string().trim().min(1).max(80).optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  tool: z.string().trim().min(1).max(120).optional(),
+  capability: z.string().trim().min(1).max(120).optional(),
+  error: z.string().trim().min(1).max(240).optional(),
+});
+
+export const OrganizationActivityItemSchema = ExecutionSessionSchema.extend({
+  owner: ExecutionSessionSchema.shape.owner.extend({
+    displayName: z.string(),
+    isExample: z.boolean(),
+  }),
+  repository: z.object({
+    repositoryRoot: z.string().nullable(),
+    remoteIdentity: z.string().nullable(),
+    branch: z.string().nullable(),
+  }),
+});
+
+export const OrganizationActivityResponseSchema = z.object({
+  items: z.array(OrganizationActivityItemSchema),
+  syntheticInclusion: z.enum(["excluded", "included"]),
+  filters: z.object({
+    q: z.string().optional(),
+    page: z.number().int().positive(),
+    pageSize: z.number().int().positive(),
+    includeSeeded: z.boolean(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    memberId: z.string().optional(),
+    repository: z.string().optional(),
+    activityState: z.string().optional(),
+    outcome: z.string().optional(),
+    reviewStatus: z.string().optional(),
+    tag: z.string().optional(),
+    model: z.string().optional(),
+    tool: z.string().optional(),
+    capability: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  page: z.object({
+    page: z.number().int().positive(),
+    pageSize: z.number().int().positive(),
+    total: z.number().int().nonnegative(),
+    hasMore: z.boolean(),
+    nextPage: z.number().int().positive().nullable(),
+  }),
+  aggregates: z.object({
+    sessions: z.number().int().nonnegative(),
+    members: z.number().int().nonnegative(),
+    repositories: z.number().int().nonnegative(),
+    activityStates: z.object({
+      live: z.number().int().nonnegative(),
+      idle: z.number().int().nonnegative(),
+      resumed: z.number().int().nonnegative(),
+    }),
+    outcomes: z.object({
+      successful: z.number().int().nonnegative(),
+      partial: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+      unknown: z.number().int().nonnegative(),
+    }),
+  }),
+  members: z.array(
+    z.object({
+      id: z.uuid(),
+      displayName: z.string(),
+      isExample: z.boolean(),
+      sessionCount: z.number().int().nonnegative(),
+    }),
+  ),
+  repositories: z.array(
+    z.object({ identity: z.string(), sessionCount: z.number().int().nonnegative() }),
+  ),
+});
+
+export const SessionAnnotationRequestSchema = z
+  .object({
+    outcome: z.enum(["successful", "partial", "failed", "unknown"]).optional(),
+    reviewStatus: z.enum(["exemplar", "needs_help", "ordinary"]).optional(),
+    tags: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  })
+  .refine(
+    (value) =>
+      value.outcome !== undefined ||
+      value.reviewStatus !== undefined ||
+      value.tags !== undefined,
+    { message: "At least one annotation field is required." },
+  );
+export const SessionAnnotationResponseSchema = ExecutionSessionSchema.shape.annotations;
+
+export const ExamplePackParamsSchema = z.object({
+  version: z.literal("starter-v1"),
+});
+export const ExamplePackImportResponseSchema = z.object({
+  version: z.literal("starter-v1"),
+  imported: z.boolean(),
+  exampleMemberId: z.uuid(),
+  sessionIds: z.array(z.string().min(1)),
+  syntheticDesignation: z.literal("seeded"),
+});
+
 export const LiveExecutionEventSchema = z.object({
   sequence: z.number().int().positive(),
   type: z.literal("session.updated"),
@@ -528,3 +657,15 @@ export type ContextEvidence = z.infer<typeof ContextEvidenceSchema>;
 export type CostEstimate = z.infer<typeof CostEstimateSchema>;
 export type CapabilityEvidence = z.infer<typeof CapabilityEvidenceSchema>;
 export type RichSessionEvidence = z.infer<typeof RichSessionEvidenceSchema>;
+export type OrganizationActivityQuery = z.infer<
+  typeof OrganizationActivityQuerySchema
+>;
+export type OrganizationActivityResponse = z.infer<
+  typeof OrganizationActivityResponseSchema
+>;
+export type SessionAnnotationRequest = z.infer<
+  typeof SessionAnnotationRequestSchema
+>;
+export type ExamplePackImportResponse = z.infer<
+  typeof ExamplePackImportResponseSchema
+>;

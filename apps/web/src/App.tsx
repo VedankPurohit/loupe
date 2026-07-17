@@ -28,6 +28,7 @@ export function App() {
   const [enrollmentGrant, setEnrollmentGrant] = useState<string>();
   const [inviteCode, setInviteCode] = useState<string>();
   const [inviteError, setInviteError] = useState<string>();
+  const [examplePackStatus, setExamplePackStatus] = useState<string>();
 
   async function loadDevices() {
     const response = await fetch("/api/v1/devices");
@@ -150,6 +151,26 @@ export function App() {
       return;
     }
     setInviteCode((body as { code: string }).code);
+  }
+
+  async function importExamplePack() {
+    setExamplePackStatus("Importing the versioned starter pack…");
+    const response = await fetch(
+      "/api/v1/administration/example-packs/starter-v1/import",
+      { method: "POST" },
+    );
+    const body = await readJson(response);
+    if (!response.ok) {
+      const error = body as { error?: { message?: string } } | undefined;
+      setExamplePackStatus(
+        error?.error?.message ?? "The Example data pack could not be imported.",
+      );
+      return;
+    }
+    const result = body as { imported: boolean; sessionIds: string[] };
+    setExamplePackStatus(
+      `${result.imported ? "Imported" : "Already imported"} starter-v1: ${result.sessionIds.join(", ")}. Every record is permanently labelled Seeded/Example.`,
+    );
   }
 
   async function redeemInvite(event: FormEvent<HTMLFormElement>) {
@@ -287,7 +308,7 @@ export function App() {
             </p>
           </section>
 
-          <SessionInspector />
+          <SessionInspector member={view.session.member} />
 
           {view.session.member.role === "administrator" && (
             <section className="card settings-card" aria-labelledby="invite-title">
@@ -315,6 +336,18 @@ export function App() {
                 </div>
               )}
               {inviteError && <p role="alert" className="error">{inviteError}</p>}
+              <div className="grant-panel">
+                <span className="detail-label">Explicit Example data</span>
+                <p>
+                  The idempotent starter-v1 pack uses a server-controlled path,
+                  never a Device credential. Seeded Sessions stay excluded from
+                  activity and aggregates until explicitly included.
+                </p>
+                <button type="button" onClick={() => void importExamplePack()}>
+                  Import starter-v1 Example pack
+                </button>
+                {examplePackStatus && <output>{examplePackStatus}</output>}
+              </div>
             </section>
           )}
 

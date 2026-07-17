@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   AgentRun,
+  AuthenticatedSessionResponse,
   ExecutionSession,
   ExecutionSessionDetail,
   LiveExecutionEvent,
+  OrganizationActivityResponse,
 } from "@workspace/contracts";
 
 type LiveStatus = "connecting" | "connected" | "interrupted";
@@ -68,33 +70,53 @@ function ParentEvidence({ agentRun }: { agentRun: AgentRun }) {
   );
 }
 
-export function SessionInspector() {
+export function SessionInspector({
+  member,
+}: {
+  member: AuthenticatedSessionResponse["member"];
+}) {
   const [sessions, setSessions] = useState<ExecutionSession[]>([]);
   const [detail, setDetail] = useState<ExecutionSessionDetail>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
-  const selectedSessionId = useRef<string | undefined>(undefined);
+  const [searchText, setSearchText] = useState("");
+  const [includeSeeded, setIncludeSeeded] = useState(
+    new URLSearchParams(window.location.search).get("includeSeeded") === "true",
+  );
+  const [activity, setActivity] = useState<OrganizationActivityResponse>();
+  const selectedSessionId = useRef<string | undefined>(
+    new URLSearchParams(window.location.search).get("session") ?? undefined,
+  );
 
   const loadSession = useCallback(async (sessionId: string) => {
     selectedSessionId.current = sessionId;
+    const url = new URL(window.location.href);
+    url.searchParams.set("session", sessionId);
+    if (includeSeeded) url.searchParams.set("includeSeeded", "true");
+    else url.searchParams.delete("includeSeeded");
+    window.history.replaceState(null, "", url);
     setDetail(
       await fetchJson<ExecutionSessionDetail>(
         `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
       ),
     );
-  }, []);
+  }, [includeSeeded]);
 
   const refreshThroughQuery = useCallback(
     async (fallbackSessionId?: string) => {
       try {
-        const response = await fetchJson<{ sessions: ExecutionSession[] }>(
-          "/api/v1/sessions",
+        const parameters = new URLSearchParams();
+        if (searchText.trim()) parameters.set("q", searchText.trim());
+        if (includeSeeded) parameters.set("includeSeeded", "true");
+        const response = await fetchJson<OrganizationActivityResponse>(
+          `/api/v1/organization/activity?${parameters.toString()}`,
         );
-        setSessions(response.sessions);
+        setActivity(response);
+        setSessions(response.items);
         const sessionId =
-          selectedSessionId.current ?? fallbackSessionId ?? response.sessions[0]?.id;
-        if (sessionId && response.sessions.some(({ id }) => id === sessionId)) {
+          selectedSessionId.current ?? fallbackSessionId ?? response.items[0]?.id;
+        if (sessionId && response.items.some(({ id }) => id === sessionId)) {
           await loadSession(sessionId);
         } else {
           selectedSessionId.current = undefined;
@@ -107,8 +129,35 @@ export function SessionInspector() {
         setLoading(false);
       }
     },
-    [loadSession],
+    [includeSeeded, loadSession, searchText],
   );
+
+  async function annotate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail) return;
+    const data = new FormData(event.currentTarget);
+    const response = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(detail.session.id)}/annotations`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          outcome: data.get("outcome"),
+          reviewStatus: data.get("reviewStatus"),
+          tags: String(data.get("tags") ?? "")
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean),
+        }),
+      },
+    );
+    if (!response.ok) {
+      setError("The Session annotation could not be saved.");
+      return;
+    }
+    await loadSession(detail.session.id);
+    await refreshThroughQuery(detail.session.id);
+  }
 
   useEffect(() => {
     void refreshThroughQuery();
@@ -154,6 +203,37 @@ export function SessionInspector() {
         </p>
       </div>
 
+      <form
+        className="discovery-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void refreshThroughQuery();
+        }}
+      >
+        <label>
+          Search Sessions, repositories, annotations, models, tools, capabilities, and errors
+          <input
+            value={searchText}
+            onChange={(event) => setSearchText(event.currentTarget.value)}
+            placeholder="Search captured evidence"
+          />
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={includeSeeded}
+            onChange={(event) => setIncludeSeeded(event.currentTarget.checked)}
+          />
+          Include clearly labelled Seeded examples
+        </label>
+        <button type="submit">Search activity</button>
+      </form>
+      {activity && (
+        <p className="section-note">
+          {activity.aggregates.sessions} Sessions · {activity.aggregates.members} Members · {activity.aggregates.repositories} repositories · Seeded {activity.syntheticInclusion}
+        </p>
+      )}
+
       {error && <p className="error" role="alert">{error}</p>}
       {loading && <p>Loading captured Sessions…</p>}
       {!loading && sessions.length === 0 && (
@@ -171,6 +251,8 @@ export function SessionInspector() {
             >
               <code>{session.id}</code>
               <span>{label(session.activityState)}</span>
+              {session.synthetic.kind === "seeded" && <span>Seeded · {session.synthetic.examplePackVersion}</span>}
+              <span>{session.ownerProfile.displayName}{session.ownerProfile.isExample ? " · Example" : ""}</span>
             </button>
           ))}
         </nav>
@@ -178,6 +260,39 @@ export function SessionInspector() {
 
       {detail && (
         <div className="inspector-content">
+          <section aria-labelledby="annotations-title">
+            <h3 id="annotations-title">Session annotations</h3>
+            <p className="section-note">
+              Outcome {label(detail.session.annotations.outcome)} · review {label(detail.session.annotations.reviewStatus)} · tags {detail.session.annotations.tags.join(", ") || "none"}
+              {detail.session.synthetic.kind === "seeded" ? ` · Seeded ${detail.session.synthetic.examplePackVersion}` : " · Real capture"}
+            </p>
+            {(member.role === "administrator" || member.id === detail.session.owner.memberId) && (
+              <form className="annotation-form" onSubmit={annotate}>
+                <label>
+                  Outcome
+                  <select name="outcome" defaultValue={detail.session.annotations.outcome}>
+                    <option value="successful">Successful</option>
+                    <option value="partial">Partial</option>
+                    <option value="failed">Failed</option>
+                    <option value="unknown">Unknown</option>
+                  </select>
+                </label>
+                <label>
+                  Review
+                  <select name="reviewStatus" defaultValue={detail.session.annotations.reviewStatus}>
+                    <option value="exemplar">Exemplar</option>
+                    <option value="needs_help">Needs help</option>
+                    <option value="ordinary">Ordinary</option>
+                  </select>
+                </label>
+                <label>
+                  Tags (comma separated)
+                  <input name="tags" defaultValue={detail.session.annotations.tags.join(", ")} />
+                </label>
+                <button type="submit">Save annotation</button>
+              </form>
+            )}
+          </section>
           <section aria-labelledby="canonical-session-title">
             <h3 id="canonical-session-title">Canonical Session</h3>
             <dl className="fact-grid">

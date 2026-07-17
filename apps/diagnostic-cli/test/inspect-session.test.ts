@@ -50,6 +50,8 @@ describe("spawned diagnostic CLI", () => {
               memberId: "11111111-1111-4111-8111-111111111111",
               deviceId: "22222222-2222-4222-8222-222222222222",
             },
+            ownerProfile: { displayName: "Real Member", isExample: false },
+            gitContext: null,
             firstObservedAt: "2026-07-17T08:00:00.000Z",
             lastObservedAt: "2026-07-17T08:04:00.000Z",
             activityState: "resumed",
@@ -62,6 +64,14 @@ describe("spawned diagnostic CLI", () => {
               selectedValue: "11111111-1111-4111-8111-111111111111",
               confidence: "high",
             },
+            annotations: {
+              outcome: "unknown",
+              reviewStatus: "ordinary",
+              tags: [],
+              updatedAt: null,
+            },
+            synthetic: { kind: "real", examplePackVersion: null },
+            deepLink: "/?session=session-real-001",
           },
           activities: [
             {
@@ -134,6 +144,28 @@ describe("spawned diagnostic CLI", () => {
             },
           ],
           timeline: [],
+          evidence: {
+            tools: [],
+            lifecycle: [],
+            tokenUsage: [],
+            context: {
+              limits: [],
+              occupancy: [],
+              firstRequestBaseline: null,
+              contribution: {
+                status: "unavailable",
+                method: "no_stable_passive_per_item_context_contract",
+                note: "Unavailable from captured evidence.",
+                evidence: {
+                  stability: ["unavailable"],
+                  derivation: "unavailable",
+                  sourceEventIds: [],
+                },
+              },
+            },
+            costEstimates: [],
+            capabilities: [],
+          },
         }),
       );
     });

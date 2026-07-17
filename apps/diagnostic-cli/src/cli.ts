@@ -3,6 +3,8 @@
 import {
   ApiErrorSchema,
   ExecutionSessionDetailResponseSchema,
+  ExamplePackImportResponseSchema,
+  OrganizationActivityResponseSchema,
   browserSessionCookieName,
   type AgentRun,
   type ExecutionSessionDetail,
@@ -11,6 +13,8 @@ import {
 
 const usage = `Usage:
   loupe-diagnostic inspect <session-id> --server-url <url> --browser-session <token>
+  loupe-diagnostic search [--query <text>] [--member <id>] [--repository <text>] [--include-seeded] [--page <n>] [--page-size <n>] [--json] --server-url <url> --browser-session <token>
+  loupe-diagnostic examples import starter-v1 --server-url <url> --browser-session <token>
 
 Environment alternatives:
   LOUPE_SERVER_URL       Server base URL (default: http://127.0.0.1:3000)
@@ -168,6 +172,150 @@ async function inspect(options: InspectOptions): Promise<void> {
   process.stdout.write(formatDetail(parsed.data));
 }
 
+async function authenticatedJson(
+  endpoint: URL,
+  browserSession: string,
+  init?: RequestInit,
+): Promise<unknown> {
+  const response = await fetch(endpoint, {
+    ...init,
+    headers: {
+      accept: "application/json",
+      cookie: `${browserSessionCookieName}=${browserSession}`,
+      ...(init?.headers ?? {}),
+    },
+  });
+  const body: unknown = await response.json().catch(() => undefined);
+  if (!response.ok) {
+    const apiError = ApiErrorSchema.safeParse(body);
+    if (apiError.success) {
+      throw new Error(`${apiError.data.error.code}: ${apiError.data.error.message}`);
+    }
+    throw new Error(`HTTP_${response.status}: Request failed.`);
+  }
+  return body;
+}
+
+function parseServerUrl(value: string): URL {
+  try {
+    const url = new URL(value);
+    if (!(["http:", "https:"] as string[]).includes(url.protocol)) throw new Error();
+    return url;
+  } catch {
+    throw new UsageError(`Invalid server URL: ${value}`);
+  }
+}
+
+async function search(args: string[]): Promise<void> {
+  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  let structured = false;
+  const query = new URLSearchParams();
+  const valueFlags: Record<string, string> = {
+    "--query": "q",
+    "--member": "memberId",
+    "--repository": "repository",
+    "--page": "page",
+    "--page-size": "pageSize",
+    "--outcome": "outcome",
+    "--review-status": "reviewStatus",
+    "--tag": "tag",
+    "--model": "model",
+    "--tool": "tool",
+    "--capability": "capability",
+    "--error": "error",
+  };
+  for (let index = 1; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (valueFlags[flag]) {
+      query.set(valueFlags[flag]!, readValue(args, index, flag));
+      index += 1;
+    } else if (flag === "--include-seeded") {
+      query.set("includeSeeded", "true");
+    } else if (flag === "--json") {
+      structured = true;
+    } else if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--browser-session") {
+      browserSession = readValue(args, index, flag);
+      index += 1;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  if (!browserSession) {
+    throw new UsageError(
+      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+    );
+  }
+  const endpoint = new URL("/api/v1/organization/activity", parseServerUrl(serverUrl));
+  endpoint.search = query.toString();
+  const parsed = OrganizationActivityResponseSchema.safeParse(
+    await authenticatedJson(endpoint, browserSession),
+  );
+  if (!parsed.success) {
+    throw new Error("INVALID_RESPONSE: Server returned invalid Organization activity.");
+  }
+  if (structured) {
+    process.stdout.write(`${JSON.stringify(parsed.data, null, 2)}\n`);
+    return;
+  }
+  const lines = [
+    `Organization activity (${parsed.data.page.total})`,
+    `Seeded examples: ${parsed.data.syntheticInclusion}`,
+    `Page ${parsed.data.page.page}; page size ${parsed.data.page.pageSize}`,
+    ...parsed.data.items.flatMap((item) => [
+      "",
+      `${item.synthetic.kind === "seeded" ? "[Seeded] " : ""}${item.id}`,
+      `  Owner: ${item.owner.displayName}${item.owner.isExample ? " [Example]" : ""}`,
+      `  Repository: ${item.repository.remoteIdentity ?? item.repository.repositoryRoot ?? "unavailable"}`,
+      `  Activity: ${item.activityState}; outcome ${item.annotations.outcome}; review ${item.annotations.reviewStatus}`,
+      `  Tags: ${item.annotations.tags.join(", ") || "none"}`,
+      `  Deep link: ${new URL(item.deepLink, serverUrl).toString()}`,
+    ]),
+  ];
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+async function importExamples(args: string[]): Promise<void> {
+  if (args[1] !== "import" || args[2] !== "starter-v1") {
+    throw new UsageError("Expected examples import starter-v1.");
+  }
+  let serverUrl = process.env.LOUPE_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.LOUPE_BROWSER_SESSION;
+  for (let index = 3; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--browser-session") {
+      browserSession = readValue(args, index, flag);
+      index += 1;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  if (!browserSession) {
+    throw new UsageError(
+      "A browser Session is required via --browser-session or LOUPE_BROWSER_SESSION.",
+    );
+  }
+  const endpoint = new URL(
+    "/api/v1/administration/example-packs/starter-v1/import",
+    parseServerUrl(serverUrl),
+  );
+  const parsed = ExamplePackImportResponseSchema.safeParse(
+    await authenticatedJson(endpoint, browserSession, { method: "POST" }),
+  );
+  if (!parsed.success) {
+    throw new Error("INVALID_RESPONSE: Server returned invalid Example-pack data.");
+  }
+  process.stdout.write(
+    `${parsed.data.imported ? "Imported" : "Already imported"} ${parsed.data.version}: ${parsed.data.sessionIds.join(", ")} [Seeded]\n`,
+  );
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
@@ -175,8 +323,14 @@ async function main(): Promise<void> {
     return;
   }
   try {
-    const options = parseInspectOptions(args);
-    await inspect(options);
+    if (args[0] === "search") {
+      await search(args);
+    } else if (args[0] === "examples") {
+      await importExamples(args);
+    } else {
+      const options = parseInspectOptions(args);
+      await inspect(options);
+    }
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(`${error.message}\n\n${usage}\n`);

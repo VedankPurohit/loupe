@@ -39,6 +39,8 @@ export const organizationMembers = pgTable(
       .references(() => organizations.id, { onDelete: "restrict" }),
     displayName: text("display_name").notNull(),
     role: memberRole("role").notNull(),
+    isExample: boolean("is_example").notNull().default(false),
+    examplePackVersion: text("example_pack_version"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("organization_members_organization_idx").on(table.organizationId)],
@@ -253,7 +255,6 @@ export const executionSessions = pgTable(
       .notNull()
       .references(() => organizationMembers.id, { onDelete: "restrict" }),
     ownerDeviceId: uuid("owner_device_id")
-      .notNull()
       .references(() => enrolledDevices.id, { onDelete: "restrict" }),
     gitContext: jsonb("git_context"),
     firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
@@ -262,6 +263,9 @@ export const executionSessions = pgTable(
     rootAgentRunId: text("root_agent_run_id").notNull(),
     projectionVersion: varchar("projection_version", { length: 32 }).notNull(),
     ownershipReconciliation: jsonb("ownership_reconciliation").notNull(),
+    isSeeded: boolean("is_seeded").notNull().default(false),
+    examplePackVersion: text("example_pack_version"),
+    searchText: text("search_text").notNull().default(""),
   },
   (table) => [
     uniqueIndex("execution_sessions_org_canonical_unique").on(
@@ -271,6 +275,54 @@ export const executionSessions = pgTable(
     index("execution_sessions_org_last_observed_idx").on(
       table.organizationId,
       table.lastObservedAt,
+    ),
+  ],
+);
+
+export const sessionAnnotations = pgTable(
+  "session_annotations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    canonicalSessionId: text("canonical_session_id").notNull(),
+    outcome: varchar("outcome", { length: 16 }).notNull().default("unknown"),
+    reviewStatus: varchar("review_status", { length: 16 })
+      .notNull()
+      .default("ordinary"),
+    tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
+    updatedByMemberId: uuid("updated_by_member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("session_annotations_org_session_unique").on(
+      table.organizationId,
+      table.canonicalSessionId,
+    ),
+    index("session_annotations_tags_idx").using("gin", table.tags),
+  ],
+);
+
+export const examplePackImports = pgTable(
+  "example_pack_imports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    version: text("version").notNull(),
+    importedByMemberId: uuid("imported_by_member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("example_pack_imports_org_version_unique").on(
+      table.organizationId,
+      table.version,
     ),
   ],
 );

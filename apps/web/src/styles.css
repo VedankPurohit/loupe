@@ -9,7 +9,7 @@
 
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 .shell {
   min-height: 100vh;
@@ -40,7 +40,7 @@ h3 { margin: 0; font-size: 1rem; }
 
 form { display: grid; gap: 18px; margin-top: 30px; }
 label { display: grid; gap: 8px; font-size: 0.85rem; font-weight: 700; }
-input { width: 100%; padding: 13px 14px; color: #16201d; background: #fff; border: 1px solid #bbc1bd; border-radius: 10px; outline: none; }
+input, select { width: 100%; padding: 13px 14px; color: #16201d; background: #fff; border: 1px solid #bbc1bd; border-radius: 10px; outline: none; }
 input:focus { border-color: #2e6d5a; box-shadow: 0 0 0 3px rgba(46, 109, 90, 0.14); }
 button { margin-top: 6px; padding: 14px 18px; border: 0; border-radius: 10px; color: white; background: #1c5948; font-weight: 800; cursor: pointer; }
 button:disabled { cursor: wait; opacity: 0.65; }
@@ -72,6 +72,10 @@ button:disabled { cursor: wait; opacity: 0.65; }
 .secondary-button { margin-top: 18px; color: #7c3027; background: #f5e4df; }
 
 .inspector-card { width: min(1120px, 100%); padding: clamp(24px, 4vw, 40px); }
+.discovery-form { grid-template-columns: minmax(260px, 1fr) auto auto; align-items: end; margin-top: 24px; }
+.discovery-form button { margin: 0; }
+.annotation-form { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; margin: 0; }
+.annotation-form button { margin: 0; }
 .inspector-heading { display: flex; align-items: start; justify-content: space-between; gap: 24px; }
 .live-status { margin: 0; padding: 8px 10px; border: 1px solid #c9cec9; border-radius: 8px; background: #f6f7f4; font-size: 0.78rem; font-weight: 750; }
 .live-connected { color: #276a56; border-color: #9bc8b9; background: #edf8f3; }
@@ -131,6 +135,7 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo
   .shell { padding: 18px; }
   .identity-row { grid-template-columns: 1fr; }
   .grant-form { grid-template-columns: 1fr; }
+  .discovery-form, .annotation-form { grid-template-columns: 1fr; }
   .device-heading { display: grid; }
   .inspector-heading { display: grid; }
   .fact-grid { grid-template-columns: 1fr; }

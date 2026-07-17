@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
@@ -15,17 +15,24 @@ import type {
   AgentRun,
   ExecutionSession,
   ExecutionSessionDetail,
+  ExamplePackImportResponse,
   GitContextObservation,
+  OrganizationActivityQuery,
+  OrganizationActivityResponse,
   Reconciliation,
+  SessionAnnotationRequest,
   Turn,
 } from "@workspace/contracts";
 import {
   activityEpisodes,
   enrolledDevices,
+  examplePackImports,
   executionAgentRuns,
   executionSessions,
   executionTimelineEvents,
   executionTurns,
+  organizationMembers,
+  sessionAnnotations,
   sourceEvents,
 } from "@workspace/database";
 
@@ -263,10 +270,20 @@ function reconciliationForOwnership(session: SessionState): Reconciliation {
   };
 }
 
-function toExecutionSession(row: typeof executionSessions.$inferSelect): ExecutionSession {
+type AnnotationRow = Pick<
+  typeof sessionAnnotations.$inferSelect,
+  "outcome" | "reviewStatus" | "tags" | "updatedAt"
+> | null;
+
+function toExecutionSession(
+  row: typeof executionSessions.$inferSelect,
+  owner: { displayName: string; isExample: boolean },
+  annotation: AnnotationRow,
+): ExecutionSession {
   return {
     id: row.canonicalSessionId,
     owner: { memberId: row.ownerMemberId, deviceId: row.ownerDeviceId },
+    ownerProfile: { displayName: owner.displayName, isExample: owner.isExample },
     gitContext: (row.gitContext as GitContextObservation | null) ?? null,
     firstObservedAt: row.firstObservedAt.toISOString(),
     lastObservedAt: row.lastObservedAt.toISOString(),
@@ -276,6 +293,17 @@ function toExecutionSession(row: typeof executionSessions.$inferSelect): Executi
     projectionVersion: "1",
     ownershipReconciliation:
       row.ownershipReconciliation as ExecutionSession["ownershipReconciliation"],
+    annotations: {
+      outcome: (annotation?.outcome ?? "unknown") as ExecutionSession["annotations"]["outcome"],
+      reviewStatus: (annotation?.reviewStatus ?? "ordinary") as ExecutionSession["annotations"]["reviewStatus"],
+      tags: (annotation?.tags as string[] | undefined) ?? [],
+      updatedAt: annotation?.updatedAt.toISOString() ?? null,
+    },
+    synthetic: {
+      kind: row.isSeeded ? "seeded" : "real",
+      examplePackVersion: row.examplePackVersion,
+    },
+    deepLink: `/?session=${encodeURIComponent(row.canonicalSessionId)}${row.isSeeded ? "&includeSeeded=true" : ""}`,
   };
 }
 
@@ -589,7 +617,12 @@ export class ExecutionStore {
     await this.database.transaction(async (transaction) => {
       await transaction
         .delete(executionSessions)
-        .where(eq(executionSessions.organizationId, device.organizationId));
+        .where(
+          and(
+            eq(executionSessions.organizationId, device.organizationId),
+            eq(executionSessions.isSeeded, false),
+          ),
+        );
       for (const session of sessions) {
         await transaction.insert(executionSessions).values({
           id: session.databaseId,
@@ -689,19 +722,226 @@ export class ExecutionStore {
 
   async listSessions(organizationId: string): Promise<ExecutionSession[]> {
     const rows = await this.database
-      .select()
+      .select({
+        session: executionSessions,
+        ownerDisplayName: organizationMembers.displayName,
+        ownerIsExample: organizationMembers.isExample,
+        annotation: {
+          outcome: sessionAnnotations.outcome,
+          reviewStatus: sessionAnnotations.reviewStatus,
+          tags: sessionAnnotations.tags,
+          updatedAt: sessionAnnotations.updatedAt,
+        },
+      })
       .from(executionSessions)
-      .where(eq(executionSessions.organizationId, organizationId))
+      .innerJoin(
+        organizationMembers,
+        eq(executionSessions.ownerMemberId, organizationMembers.id),
+      )
+      .leftJoin(
+        sessionAnnotations,
+        and(
+          eq(sessionAnnotations.organizationId, organizationId),
+          eq(
+            sessionAnnotations.canonicalSessionId,
+            executionSessions.canonicalSessionId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(executionSessions.organizationId, organizationId),
+          eq(executionSessions.isSeeded, false),
+        ),
+      )
       .orderBy(asc(executionSessions.firstObservedAt));
-    return rows.map(toExecutionSession);
+    return rows.map((row) =>
+      toExecutionSession(
+        row.session,
+        { displayName: row.ownerDisplayName, isExample: row.ownerIsExample },
+        row.annotation,
+      ),
+    );
   }
 
-  async getSession(
+  async searchActivity(
+    organizationId: string,
+    query: OrganizationActivityQuery,
+  ): Promise<OrganizationActivityResponse> {
+    const conditions = [eq(executionSessions.organizationId, organizationId)];
+    if (!query.includeSeeded) conditions.push(eq(executionSessions.isSeeded, false));
+    if (query.memberId) conditions.push(eq(executionSessions.ownerMemberId, query.memberId));
+    if (query.activityState) {
+      conditions.push(eq(executionSessions.activityState, query.activityState));
+    }
+    if (query.from) conditions.push(gte(executionSessions.lastObservedAt, new Date(query.from)));
+    if (query.to) conditions.push(lte(executionSessions.firstObservedAt, new Date(query.to)));
+    if (query.repository) {
+      const repositoryPattern = `%${query.repository}%`;
+      conditions.push(
+        or(
+          ilike(sql`${executionSessions.gitContext} ->> 'repositoryRoot'`, repositoryPattern),
+          ilike(sql`${executionSessions.gitContext} ->> 'remoteIdentity'`, repositoryPattern),
+          ilike(sql`${executionSessions.gitContext} ->> 'branch'`, repositoryPattern),
+        )!,
+      );
+    }
+    if (query.outcome) {
+      conditions.push(
+        query.outcome === "unknown"
+          ? or(eq(sessionAnnotations.outcome, "unknown"), sql`${sessionAnnotations.outcome} is null` )!
+          : eq(sessionAnnotations.outcome, query.outcome),
+      );
+    }
+    if (query.reviewStatus) {
+      conditions.push(
+        query.reviewStatus === "ordinary"
+          ? or(eq(sessionAnnotations.reviewStatus, "ordinary"), sql`${sessionAnnotations.reviewStatus} is null`)!
+          : eq(sessionAnnotations.reviewStatus, query.reviewStatus),
+      );
+    }
+    if (query.tag) {
+      conditions.push(sql`${sessionAnnotations.tags} @> ${JSON.stringify([query.tag])}::jsonb`);
+    }
+    const capturedEvidence = (value: string) => sql<boolean>`exists (
+      select 1 from source_events evidence_event
+      where evidence_event.organization_id = ${organizationId}
+        and evidence_event.raw_payload ->> 'session_id' = ${executionSessions.canonicalSessionId}
+        and evidence_event.raw_payload::text ilike ${`%${value}%`}
+    )`;
+    if (query.model) conditions.push(capturedEvidence(query.model));
+    if (query.tool) conditions.push(capturedEvidence(query.tool));
+    if (query.capability) conditions.push(capturedEvidence(query.capability));
+    if (query.error) conditions.push(capturedEvidence(query.error));
+    if (query.q) {
+      conditions.push(sql<boolean>`to_tsvector('english', concat_ws(' ',
+        ${executionSessions.canonicalSessionId},
+        ${organizationMembers.displayName},
+        ${executionSessions.searchText},
+        coalesce(${executionSessions.gitContext} ->> 'repositoryRoot', ''),
+        coalesce(${executionSessions.gitContext} ->> 'remoteIdentity', ''),
+        coalesce(${sessionAnnotations.outcome}, 'unknown'),
+        coalesce(${sessionAnnotations.reviewStatus}, 'ordinary'),
+        coalesce(${sessionAnnotations.tags}::text, ''),
+        coalesce((
+          select string_agg(search_event.raw_payload::text, ' ')
+          from source_events search_event
+          where search_event.organization_id = ${organizationId}
+            and search_event.raw_payload ->> 'session_id' = ${executionSessions.canonicalSessionId}
+        ), '')
+      )) @@ websearch_to_tsquery('english', ${query.q})`);
+    }
+
+    const rows = await this.database
+      .select({
+        session: executionSessions,
+        ownerDisplayName: organizationMembers.displayName,
+        ownerIsExample: organizationMembers.isExample,
+        annotation: {
+          outcome: sessionAnnotations.outcome,
+          reviewStatus: sessionAnnotations.reviewStatus,
+          tags: sessionAnnotations.tags,
+          updatedAt: sessionAnnotations.updatedAt,
+        },
+      })
+      .from(executionSessions)
+      .innerJoin(
+        organizationMembers,
+        eq(executionSessions.ownerMemberId, organizationMembers.id),
+      )
+      .leftJoin(
+        sessionAnnotations,
+        and(
+          eq(sessionAnnotations.organizationId, organizationId),
+          eq(
+            sessionAnnotations.canonicalSessionId,
+            executionSessions.canonicalSessionId,
+          ),
+        ),
+      )
+      .where(and(...conditions))
+      .orderBy(desc(executionSessions.lastObservedAt), asc(executionSessions.canonicalSessionId));
+
+    const activityStates = { live: 0, idle: 0, resumed: 0 };
+    const outcomes = { successful: 0, partial: 0, failed: 0, unknown: 0 };
+    const memberCounts = new Map<string, { displayName: string; isExample: boolean; count: number }>();
+    const repositoryCounts = new Map<string, number>();
+    for (const row of rows) {
+      activityStates[row.session.activityState as keyof typeof activityStates] += 1;
+      const outcome = (row.annotation?.outcome ?? "unknown") as keyof typeof outcomes;
+      outcomes[outcome] += 1;
+      const member = memberCounts.get(row.session.ownerMemberId);
+      memberCounts.set(row.session.ownerMemberId, {
+        displayName: row.ownerDisplayName,
+        isExample: row.ownerIsExample,
+        count: (member?.count ?? 0) + 1,
+      });
+      const context = row.session.gitContext as GitContextObservation | null;
+      const repository = context?.remoteIdentity ?? context?.repositoryRoot;
+      if (repository) repositoryCounts.set(repository, (repositoryCounts.get(repository) ?? 0) + 1);
+    }
+    const start = (query.page - 1) * query.pageSize;
+    const pageRows = rows.slice(start, start + query.pageSize);
+    return {
+      items: pageRows.map((row) => {
+        const session = toExecutionSession(
+          row.session,
+          { displayName: row.ownerDisplayName, isExample: row.ownerIsExample },
+          row.annotation,
+        );
+        const context = session.gitContext;
+        return {
+          ...session,
+          owner: {
+            ...session.owner,
+            displayName: session.ownerProfile.displayName,
+            isExample: session.ownerProfile.isExample,
+          },
+          repository: {
+            repositoryRoot: context?.repositoryRoot ?? null,
+            remoteIdentity: context?.remoteIdentity ?? null,
+            branch: context?.branch ?? null,
+          },
+        };
+      }),
+      syntheticInclusion: query.includeSeeded ? "included" : "excluded",
+      filters: query,
+      page: {
+        page: query.page,
+        pageSize: query.pageSize,
+        total: rows.length,
+        hasMore: start + query.pageSize < rows.length,
+        nextPage: start + query.pageSize < rows.length ? query.page + 1 : null,
+      },
+      aggregates: {
+        sessions: rows.length,
+        members: memberCounts.size,
+        repositories: repositoryCounts.size,
+        activityStates,
+        outcomes,
+      },
+      members: [...memberCounts.entries()]
+        .map(([id, member]) => ({
+          id,
+          displayName: member.displayName,
+          isExample: member.isExample,
+          sessionCount: member.count,
+        }))
+        .sort((left, right) => left.displayName.localeCompare(right.displayName)),
+      repositories: [...repositoryCounts.entries()]
+        .map(([identity, sessionCount]) => ({ identity, sessionCount }))
+        .sort((left, right) => left.identity.localeCompare(right.identity)),
+    };
+  }
+
+  async annotateSession(
     organizationId: string,
     canonicalSessionId: string,
-  ): Promise<ExecutionSessionDetail | undefined> {
-    const [row] = await this.database
-      .select()
+    actor: { id: string; role: "member" | "administrator" },
+    input: SessionAnnotationRequest,
+  ): Promise<ExecutionSession["annotations"] | "forbidden" | undefined> {
+    const [session] = await this.database
+      .select({ ownerMemberId: executionSessions.ownerMemberId })
       .from(executionSessions)
       .where(
         and(
@@ -710,7 +950,192 @@ export class ExecutionStore {
         ),
       )
       .limit(1);
-    if (!row) return undefined;
+    if (!session) return undefined;
+    if (actor.role !== "administrator" && session.ownerMemberId !== actor.id) {
+      return "forbidden";
+    }
+    const [existing] = await this.database
+      .select()
+      .from(sessionAnnotations)
+      .where(
+        and(
+          eq(sessionAnnotations.organizationId, organizationId),
+          eq(sessionAnnotations.canonicalSessionId, canonicalSessionId),
+        ),
+      )
+      .limit(1);
+    const tags = input.tags
+      ? [...new Set(input.tags.map((tag) => tag.trim()).filter(Boolean))]
+      : ((existing?.tags as string[] | undefined) ?? []);
+    const [annotation] = await this.database
+      .insert(sessionAnnotations)
+      .values({
+        organizationId,
+        canonicalSessionId,
+        outcome: input.outcome ?? existing?.outcome ?? "unknown",
+        reviewStatus: input.reviewStatus ?? existing?.reviewStatus ?? "ordinary",
+        tags,
+        updatedByMemberId: actor.id,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [sessionAnnotations.organizationId, sessionAnnotations.canonicalSessionId],
+        set: {
+          outcome: input.outcome ?? existing?.outcome ?? "unknown",
+          reviewStatus: input.reviewStatus ?? existing?.reviewStatus ?? "ordinary",
+          tags,
+          updatedByMemberId: actor.id,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return {
+      outcome: annotation!.outcome as ExecutionSession["annotations"]["outcome"],
+      reviewStatus: annotation!.reviewStatus as ExecutionSession["annotations"]["reviewStatus"],
+      tags: annotation!.tags as string[],
+      updatedAt: annotation!.updatedAt.toISOString(),
+    };
+  }
+
+  async importExamplePack(
+    organizationId: string,
+    importedByMemberId: string,
+    version: "starter-v1",
+  ): Promise<ExamplePackImportResponse> {
+    return this.database.transaction(async (transaction) => {
+      const [existingImport] = await transaction
+        .select()
+        .from(examplePackImports)
+        .where(
+          and(
+            eq(examplePackImports.organizationId, organizationId),
+            eq(examplePackImports.version, version),
+          ),
+        )
+        .limit(1);
+      const [existingMember] = await transaction
+        .select({ id: organizationMembers.id })
+        .from(organizationMembers)
+        .where(
+          and(
+            eq(organizationMembers.organizationId, organizationId),
+            eq(organizationMembers.isExample, true),
+            eq(organizationMembers.examplePackVersion, version),
+          ),
+        )
+        .limit(1);
+      let exampleMemberId = existingMember?.id;
+      if (!exampleMemberId) {
+        const [member] = await transaction
+          .insert(organizationMembers)
+          .values({
+            organizationId,
+            displayName: "Example Member · Starter pack",
+            role: "member",
+            isExample: true,
+            examplePackVersion: version,
+          })
+          .returning({ id: organizationMembers.id });
+        exampleMemberId = member!.id;
+      }
+      const sessionIds = ["seeded-starter-compilation"];
+      if (!existingImport) {
+        const observedAt = new Date("2026-07-01T09:00:00.000Z");
+        await transaction.insert(executionSessions).values({
+          id: stableUuid("example-pack", organizationId, version, sessionIds[0]!),
+          organizationId,
+          canonicalSessionId: sessionIds[0]!,
+          ownerMemberId: exampleMemberId,
+          ownerDeviceId: null,
+          gitContext: {
+            status: "available",
+            repositoryRoot: "/examples/searchable-repository",
+            remoteIdentity: "https://example.com/acme/searchable-repository.git",
+            branch: "example",
+            detached: false,
+            worktree: "/examples/searchable-repository",
+            commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            sampledAt: observedAt.toISOString(),
+            provenance: {
+              source: "relay_local_git",
+              evidence: "local_observation",
+              stability: "observed",
+              derivation: "exact",
+              cwd: "/examples/searchable-repository",
+            },
+            reason: null,
+          },
+          firstObservedAt: observedAt,
+          lastObservedAt: observedAt,
+          activityState: "idle",
+          rootAgentRunId: `root:${sessionIds[0]}`,
+          projectionVersion: "1",
+          ownershipReconciliation: {
+            inputs: [],
+            rule: "example_pack_server_controlled",
+            selectedValue: null,
+            confidence: "high",
+          },
+          isSeeded: true,
+          examplePackVersion: version,
+          searchText: "compilation error shell example searchable repository",
+        });
+        await transaction.insert(examplePackImports).values({
+          organizationId,
+          version,
+          importedByMemberId,
+        });
+      }
+      return {
+        version,
+        imported: !existingImport,
+        exampleMemberId,
+        sessionIds,
+        syntheticDesignation: "seeded",
+      };
+    });
+  }
+
+  async getSession(
+    organizationId: string,
+    canonicalSessionId: string,
+  ): Promise<ExecutionSessionDetail | undefined> {
+    const [selected] = await this.database
+      .select({
+        session: executionSessions,
+        ownerDisplayName: organizationMembers.displayName,
+        ownerIsExample: organizationMembers.isExample,
+        annotation: {
+          outcome: sessionAnnotations.outcome,
+          reviewStatus: sessionAnnotations.reviewStatus,
+          tags: sessionAnnotations.tags,
+          updatedAt: sessionAnnotations.updatedAt,
+        },
+      })
+      .from(executionSessions)
+      .innerJoin(
+        organizationMembers,
+        eq(executionSessions.ownerMemberId, organizationMembers.id),
+      )
+      .leftJoin(
+        sessionAnnotations,
+        and(
+          eq(sessionAnnotations.organizationId, organizationId),
+          eq(
+            sessionAnnotations.canonicalSessionId,
+            executionSessions.canonicalSessionId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(executionSessions.organizationId, organizationId),
+          eq(executionSessions.canonicalSessionId, canonicalSessionId),
+        ),
+      )
+      .limit(1);
+    if (!selected) return undefined;
+    const row = selected.session;
     const [activities, turns, agents, timeline, retainedEvidence] = await Promise.all([
       this.database
         .select()
@@ -779,7 +1204,11 @@ export class ExecutionStore {
       priceTable: this.priceTable,
     });
     return {
-      session: toExecutionSession(row),
+      session: toExecutionSession(
+        row,
+        { displayName: selected.ownerDisplayName, isExample: selected.ownerIsExample },
+        selected.annotation,
+      ),
       activities: activities.map((activity) => ({
         id: activity.publicId,
         source: activity.source as ActivityEpisode["source"],
