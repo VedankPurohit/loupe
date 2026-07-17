@@ -1,0 +1,18 @@
+{
+  "approval_prompt_text_detected": false,
+  "approval_response_sent": true,
+  "fixture_schema_version": 1,
+  "interpretation": "PermissionRequest and Stop hooks plus rollout session_meta are authoritative; ANSI terminal text detection is not used as lifecycle evidence",
+  "process_exit_code": 0,
+  "producer": {
+    "name": "codex-cli",
+    "version": "0.144.5"
+  },
+  "pty": true,
+  "source": "codex_tui_pty_probe",
+  "surface": "codex fork TUI",
+  "synthetic_command_effect_observed": true,
+  "synthetic_workspace_only": true,
+  "terminal_capture": "excluded_after_derived_evidence; raw temporary file deleted",
+  "terminal_completion_sentinel_detected": false
+}

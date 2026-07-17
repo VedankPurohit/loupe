@@ -1,0 +1,781 @@
+{
+  "events": [
+    {
+      "captured_at": "2026-07-17T10:36:29.304107+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "source": "startup",
+        "transcript_path": "<unstable-transcript-path>"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:29.354093+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "prompt": "<synthetic-content-redacted>",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:34.995644+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_use_id": "tool-use-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:35.117592+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:39.775023+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_use_id": "tool-use-probe-002",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:39.943206+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-002",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:43.506863+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_use_id": "tool-use-probe-003",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:43.610364+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-003",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:45.824637+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "Stop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-001"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:51.313286+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "source": "resume",
+        "transcript_path": "<unstable-transcript-path>"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:36:51.351914+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "prompt": "<synthetic-content-redacted>",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-002"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:01.381001+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_use_id": "tool-use-probe-004",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-002"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:01.521243+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-004",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-002"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:03.181633+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "Stop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-002"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:07.653556+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "source": "resume",
+        "transcript_path": "<unstable-transcript-path>"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:07.706870+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "prompt": "<synthetic-content-redacted>",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-003"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:11.375095+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreCompact",
+        "model": "gpt-5.6-sol",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "trigger": "auto",
+        "turn_id": "turn-probe-003"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:19.867383+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostCompact",
+        "model": "gpt-5.6-sol",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "trigger": "auto",
+        "turn_id": "turn-probe-003"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:22.120336+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "message": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "mcp__probe__echo",
+        "tool_use_id": "tool-use-probe-005",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-003"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:22.175428+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "message": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "mcp__probe__echo",
+        "tool_response": {
+          "content": [
+            {
+              "text": "<synthetic-tool-content-redacted>",
+              "type": "<synthetic-tool-content-redacted>"
+            }
+          ]
+        },
+        "tool_use_id": "tool-use-probe-005",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-003"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:24.201531+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "Stop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-003"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:29.722480+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "source": "resume",
+        "transcript_path": "<unstable-transcript-path>"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:29.788246+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "prompt": "<synthetic-content-redacted>",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-004"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:34.214783+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "Stop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-004"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:38.402192+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "source": "resume",
+        "transcript_path": "<unstable-transcript-path>"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:38.475615+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "prompt": "<synthetic-content-redacted>",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-005"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:44.040266+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "fork_turns": "<synthetic-tool-content-redacted>",
+          "message": "<synthetic-tool-content-redacted>",
+          "task_name": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "collaborationspawn_agent",
+        "tool_use_id": "tool-use-probe-006",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-005"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:44.590684+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "fork_turns": "<synthetic-tool-content-redacted>",
+          "message": "<synthetic-tool-content-redacted>",
+          "task_name": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "collaborationspawn_agent",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-006",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-005"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:46.674825+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "timeout_ms": 60000
+        },
+        "tool_name": "collaborationwait_agent",
+        "tool_use_id": "tool-use-probe-007",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-005"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:48.449411+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-001",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SubagentStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-006"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:51.273208+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-001",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "fork_turns": "<synthetic-tool-content-redacted>",
+          "message": "<synthetic-tool-content-redacted>",
+          "task_name": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "collaborationspawn_agent",
+        "tool_use_id": "tool-use-probe-008",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-006"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:51.441762+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-001",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "fork_turns": "<synthetic-tool-content-redacted>",
+          "message": "<synthetic-tool-content-redacted>",
+          "task_name": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "collaborationspawn_agent",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-008",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-006"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:53.908360+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-001",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "timeout_ms": 30000
+        },
+        "tool_name": "collaborationwait_agent",
+        "tool_use_id": "tool-use-probe-009",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-006"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:56.061204+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-002",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SubagentStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-007"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:59.478212+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-002",
+        "agent_transcript_path": "<unstable-agent-transcript-path>",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SubagentStop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-007"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:37:59.534650+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-001",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "timeout_ms": 30000
+        },
+        "tool_name": "collaborationwait_agent",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-009",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-006"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:38:02.669498+00:00",
+      "payload": {
+        "agent_id": "agent-run-probe-001",
+        "agent_transcript_path": "<unstable-agent-transcript-path>",
+        "agent_type": "default",
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SubagentStop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-006"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:38:02.748522+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "tool_input": {
+          "timeout_ms": 60000
+        },
+        "tool_name": "collaborationwait_agent",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-007",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-005"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:38:05.878098+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "Stop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-005"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:38:10.534679+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "source": "resume",
+        "transcript_path": "<unstable-transcript-path>"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:38:10.575978+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "prompt": "<synthetic-content-redacted>",
+        "session_id": "session-probe-001",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-008"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:38:15.889091+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "Stop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "bypassPermissions",
+        "session_id": "session-probe-001",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-008"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:46:45.889942+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "session_id": "session-probe-002",
+        "source": "startup",
+        "transcript_path": "<unstable-transcript-path>"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:46:45.929429+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "prompt": "<synthetic-content-redacted>",
+        "session_id": "session-probe-002",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-009"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:46:51.474539+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "session_id": "session-probe-002",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_use_id": "tool-use-probe-010",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-009"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:46:55.331919+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "session_id": "session-probe-002",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_use_id": "tool-use-probe-011",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-009"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:46:55.407092+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PermissionRequest",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "session_id": "session-probe-002",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-009"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:47:05.229610+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "session_id": "session-probe-002",
+        "tool_input": {
+          "command": "<synthetic-tool-content-redacted>"
+        },
+        "tool_name": "Bash",
+        "tool_response": "<synthetic-tool-content-redacted>",
+        "tool_use_id": "tool-use-probe-011",
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-009"
+      }
+    },
+    {
+      "captured_at": "2026-07-17T10:47:07.091486+00:00",
+      "payload": {
+        "cwd": "<probe-workdir>",
+        "hook_event_name": "Stop",
+        "last_assistant_message": "<synthetic-content-redacted>",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "session_id": "session-probe-002",
+        "stop_hook_active": false,
+        "transcript_path": "<unstable-transcript-path>",
+        "turn_id": "turn-probe-009"
+      }
+    }
+  ],
+  "fixture_schema_version": 1,
+  "producer": {
+    "name": "codex-cli",
+    "version": "0.144.5"
+  },
+  "sanitization": {
+    "content": "replaced",
+    "identifiers": "deterministically pseudonymized",
+    "paths": "replaced",
+    "unknown_fields": "preserved"
+  },
+  "source": "codex_hook"
+}

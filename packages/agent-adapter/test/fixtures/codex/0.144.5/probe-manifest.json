@@ -1,0 +1,176 @@
+{
+  "capabilities": {
+    "compaction_timing_trigger": {
+      "classification": [
+        "documented",
+        "observed"
+      ],
+      "derivation": "exact_auto_hook_events"
+    },
+    "complete_passive_capability_snapshot": {
+      "classification": [
+        "unavailable"
+      ],
+      "derivation": "none"
+    },
+    "completion_to_turn_trace_association": {
+      "classification": [
+        "observed",
+        "unstable"
+      ],
+      "derivation": "exact_source_defined_trace_parentage"
+    },
+    "explicit_skill_mention": {
+      "classification": [
+        "observed",
+        "unstable"
+      ],
+      "derivation": "partial_source_defined_trace_and_prompt_evidence"
+    },
+    "fork": {
+      "classification": [
+        "observed",
+        "unstable"
+      ],
+      "derivation": "exact_user_fork_lineage_in_rollout; hook_session_start_source_startup"
+    },
+    "implicit_skill_activation": {
+      "classification": [
+        "unavailable"
+      ],
+      "derivation": "none"
+    },
+    "logical_model_request_identity": {
+      "classification": [
+        "unavailable"
+      ],
+      "derivation": "transport_attempts_only"
+    },
+    "mcp_use": {
+      "classification": [
+        "documented",
+        "observed"
+      ],
+      "derivation": "exact_when_emitted"
+    },
+    "nested_parentage": {
+      "classification": [
+        "observed",
+        "unstable"
+      ],
+      "derivation": "exact_agent_communication_and_rollout; hooks_only_inferred"
+    },
+    "permission_request": {
+      "classification": [
+        "documented",
+        "observed"
+      ],
+      "derivation": "exact_when_emitted"
+    },
+    "provider_reported_cost": {
+      "classification": [
+        "unavailable"
+      ],
+      "derivation": "none"
+    },
+    "resume": {
+      "classification": [
+        "documented",
+        "observed"
+      ],
+      "derivation": "exact"
+    },
+    "session_identity": {
+      "classification": [
+        "documented",
+        "observed"
+      ],
+      "derivation": "exact"
+    },
+    "tool_id_reconciliation": {
+      "classification": [
+        "observed",
+        "unstable"
+      ],
+      "derivation": "exact_for_10_of_10_hook_ids"
+    },
+    "turn_identity": {
+      "classification": [
+        "documented",
+        "observed"
+      ],
+      "derivation": "exact"
+    },
+    "websocket_event_log": {
+      "classification": [
+        "documented",
+        "unavailable"
+      ],
+      "derivation": "not_emitted; websocket_request_observed"
+    }
+  },
+  "fixture_schema_version": 1,
+  "observations": {
+    "failed_command_scenario": {
+      "cli_exit_code_observed": 1,
+      "decision": "stable_passive_failure_outcome_unavailable",
+      "hook_structured_exit_code": null,
+      "otel_tool_result_success": "true",
+      "requested_exit_code": 1
+    },
+    "hook_event_counts": {
+      "PermissionRequest": 1,
+      "PostCompact": 1,
+      "PostToolUse": 10,
+      "PreCompact": 1,
+      "PreToolUse": 11,
+      "SessionStart": 7,
+      "Stop": 7,
+      "SubagentStart": 2,
+      "SubagentStop": 2,
+      "UserPromptSubmit": 7
+    },
+    "hook_tool_ids": 10,
+    "hook_tool_ids_found_in_otel": 10,
+    "interactive_probe": {
+      "approval_response_sent": true,
+      "pty": true,
+      "synthetic_command_effect_observed": true,
+      "terminal_text_detection_used_as_evidence": false
+    },
+    "otel_event_names": [
+      "codex.agent_communication",
+      "codex.api_request",
+      "codex.conversation_starts",
+      "codex.sse_event",
+      "codex.tool_decision",
+      "codex.tool_result",
+      "codex.user_prompt",
+      "codex.websocket_connect",
+      "codex.websocket_request"
+    ],
+    "rollout_records_retained": 80,
+    "session_start_sources": [
+      "resume",
+      "startup"
+    ],
+    "turn_spans": 9
+  },
+  "probe": {
+    "auth": "existing ChatGPT login referenced; identity and credentials excluded",
+    "model_observed": "gpt-5.6-sol",
+    "platform": "macOS",
+    "raw_capture_counts": {
+      "hook_records": 49,
+      "otel_log_batches": 73,
+      "otel_trace_batches": 32
+    },
+    "raw_location": "temporary directory outside repository; intentionally not retained",
+    "root_turns": 7,
+    "surface": "codex exec, exec resume, and codex fork TUI"
+  },
+  "producer": {
+    "name": "codex-cli",
+    "version": "0.144.5"
+  }
+}

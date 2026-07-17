@@ -1,0 +1,1791 @@
+{
+  "fixture_schema_version": 1,
+  "producer": {
+    "name": "codex-cli",
+    "version": "0.144.5"
+  },
+  "records": [
+    {
+      "payload_keys": [
+        "base_instructions",
+        "cli_version",
+        "context_window",
+        "cwd",
+        "history_mode",
+        "id",
+        "model_provider",
+        "originator",
+        "session_id",
+        "source",
+        "thread_source",
+        "timestamp"
+      ],
+      "record_type": "session_meta",
+      "retained_values": {
+        "cli_version": "0.144.5",
+        "context_window": {
+          "window_id": "compaction-window-probe-001"
+        },
+        "id": "agent-run-probe-003",
+        "originator": "Codex Desktop",
+        "session_id": "session-probe-001",
+        "source": "exec",
+        "thread_source": "user"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 1
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-001",
+        "type": "task_started"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 2
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-001"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 8
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-001",
+        "type": "task_complete"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 28
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-002",
+        "type": "task_started"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 30
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-002"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 31
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-002",
+        "type": "task_complete"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 43
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-003",
+        "type": "task_started"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 45
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-003"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 46
+    },
+    {
+      "payload_keys": [
+        "first_window_id",
+        "message",
+        "previous_window_id",
+        "replacement_history",
+        "window_id",
+        "window_number"
+      ],
+      "record_type": "compacted",
+      "retained_values": {},
+      "source_file_slot": 1,
+      "source_ordinal": 56
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-003"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 58
+    },
+    {
+      "payload_keys": [
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "type": "context_compacted"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 60
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-003",
+        "type": "task_complete"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 68
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-004",
+        "type": "task_started"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 70
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-004"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 71
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-004",
+        "type": "task_complete"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 80
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-005",
+        "type": "task_started"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 82
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-005"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 83
+    },
+    {
+      "payload_keys": [
+        "agent_path",
+        "agent_thread_id",
+        "event_id",
+        "kind",
+        "occurred_at_ms",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "agent_path": "<path-redacted>",
+        "agent_thread_id": "agent-run-probe-001",
+        "type": "sub_agent_activity"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 90
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-005",
+        "type": "task_complete"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 102
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-008",
+        "type": "task_started"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 104
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-008"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 105
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-008",
+        "type": "task_complete"
+      },
+      "source_file_slot": 1,
+      "source_ordinal": 112
+    },
+    {
+      "payload_keys": [
+        "agent_nickname",
+        "agent_path",
+        "base_instructions",
+        "cli_version",
+        "context_window",
+        "cwd",
+        "forked_from_id",
+        "history_mode",
+        "id",
+        "model_provider",
+        "multi_agent_version",
+        "originator",
+        "parent_thread_id",
+        "session_id",
+        "source",
+        "thread_source",
+        "timestamp"
+      ],
+      "record_type": "session_meta",
+      "retained_values": {
+        "agent_nickname": "Maxwell",
+        "agent_path": "<path-redacted>",
+        "cli_version": "0.144.5",
+        "context_window": {
+          "window_id": "compaction-window-probe-002"
+        },
+        "forked_from_id": "agent-run-probe-003",
+        "id": "agent-run-probe-001",
+        "multi_agent_version": "v2",
+        "originator": "Codex Desktop",
+        "parent_thread_id": "agent-run-probe-003",
+        "session_id": "session-probe-001",
+        "source": {
+          "subagent": {
+            "thread_spawn": {
+              "agent_nickname": "Maxwell",
+              "agent_path": "<path-redacted>",
+              "agent_role": null,
+              "depth": 1,
+              "parent_thread_id": "agent-run-probe-003"
+            }
+          }
+        },
+        "thread_source": "subagent"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 1
+    },
+    {
+      "payload_keys": [
+        "base_instructions",
+        "cli_version",
+        "context_window",
+        "cwd",
+        "history_mode",
+        "id",
+        "model_provider",
+        "originator",
+        "session_id",
+        "source",
+        "thread_source",
+        "timestamp"
+      ],
+      "record_type": "session_meta",
+      "retained_values": {
+        "cli_version": "0.144.5",
+        "context_window": {
+          "window_id": "compaction-window-probe-001"
+        },
+        "id": "agent-run-probe-003",
+        "originator": "Codex Desktop",
+        "session_id": "session-probe-001",
+        "source": "exec",
+        "thread_source": "user"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 2
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-001",
+        "type": "task_started"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 3
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-001"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 8
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-001",
+        "type": "task_complete"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 19
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-002",
+        "type": "task_started"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 21
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-002"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 22
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-002",
+        "type": "task_complete"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 30
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-003",
+        "type": "task_started"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 32
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-003"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 33
+    },
+    {
+      "payload_keys": [
+        "first_window_id",
+        "message",
+        "previous_window_id",
+        "replacement_history",
+        "window_id",
+        "window_number"
+      ],
+      "record_type": "compacted",
+      "retained_values": {},
+      "source_file_slot": 2,
+      "source_ordinal": 39
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-003"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 41
+    },
+    {
+      "payload_keys": [
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "type": "context_compacted"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 43
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-003",
+        "type": "task_complete"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 49
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-004",
+        "type": "task_started"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 51
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-004"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 52
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-004",
+        "type": "task_complete"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 59
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-005",
+        "type": "task_started"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 61
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-005"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 62
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-006",
+        "type": "task_started"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 67
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-006"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 70
+    },
+    {
+      "payload_keys": [
+        "agent_path",
+        "agent_thread_id",
+        "event_id",
+        "kind",
+        "occurred_at_ms",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "agent_path": "<path-redacted>",
+        "agent_thread_id": "agent-run-probe-002",
+        "type": "sub_agent_activity"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 74
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-006",
+        "type": "task_complete"
+      },
+      "source_file_slot": 2,
+      "source_ordinal": 85
+    },
+    {
+      "payload_keys": [
+        "agent_nickname",
+        "agent_path",
+        "base_instructions",
+        "cli_version",
+        "context_window",
+        "cwd",
+        "forked_from_id",
+        "history_mode",
+        "id",
+        "model_provider",
+        "multi_agent_version",
+        "originator",
+        "parent_thread_id",
+        "session_id",
+        "source",
+        "thread_source",
+        "timestamp"
+      ],
+      "record_type": "session_meta",
+      "retained_values": {
+        "agent_nickname": "Meitner",
+        "agent_path": "<path-redacted>",
+        "cli_version": "0.144.5",
+        "context_window": {
+          "window_id": "compaction-window-probe-003"
+        },
+        "forked_from_id": "agent-run-probe-001",
+        "id": "agent-run-probe-002",
+        "multi_agent_version": "v2",
+        "originator": "Codex Desktop",
+        "parent_thread_id": "agent-run-probe-001",
+        "session_id": "session-probe-001",
+        "source": {
+          "subagent": {
+            "thread_spawn": {
+              "agent_nickname": "Meitner",
+              "agent_path": "<path-redacted>",
+              "agent_role": null,
+              "depth": 2,
+              "parent_thread_id": "agent-run-probe-001"
+            }
+          }
+        },
+        "thread_source": "subagent"
+      },
+      "source_file_slot": 3,
+      "source_ordinal": 1
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-004",
+        "type": "task_complete"
+      },
+      "source_file_slot": 3,
+      "source_ordinal": 8
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-005",
+        "type": "task_started"
+      },
+      "source_file_slot": 3,
+      "source_ordinal": 10
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-006",
+        "type": "task_started"
+      },
+      "source_file_slot": 3,
+      "source_ordinal": 14
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-007",
+        "type": "task_started"
+      },
+      "source_file_slot": 3,
+      "source_ordinal": 16
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-007"
+      },
+      "source_file_slot": 3,
+      "source_ordinal": 22
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-007",
+        "type": "task_complete"
+      },
+      "source_file_slot": 3,
+      "source_ordinal": 28
+    },
+    {
+      "payload_keys": [
+        "base_instructions",
+        "cli_version",
+        "context_window",
+        "cwd",
+        "forked_from_id",
+        "history_mode",
+        "id",
+        "model_provider",
+        "multi_agent_version",
+        "originator",
+        "session_id",
+        "source",
+        "thread_source",
+        "timestamp"
+      ],
+      "record_type": "session_meta",
+      "retained_values": {
+        "cli_version": "0.144.5",
+        "context_window": {
+          "window_id": "compaction-window-probe-004"
+        },
+        "forked_from_id": "agent-run-probe-003",
+        "id": "agent-run-probe-004",
+        "multi_agent_version": "v2",
+        "originator": "Codex Desktop",
+        "session_id": "session-probe-002",
+        "source": "cli",
+        "thread_source": "user"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 1
+    },
+    {
+      "payload_keys": [
+        "base_instructions",
+        "cli_version",
+        "context_window",
+        "cwd",
+        "history_mode",
+        "id",
+        "model_provider",
+        "originator",
+        "session_id",
+        "source",
+        "thread_source",
+        "timestamp"
+      ],
+      "record_type": "session_meta",
+      "retained_values": {
+        "cli_version": "0.144.5",
+        "context_window": {
+          "window_id": "compaction-window-probe-001"
+        },
+        "id": "agent-run-probe-003",
+        "originator": "Codex Desktop",
+        "session_id": "session-probe-001",
+        "source": "exec",
+        "thread_source": "user"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 2
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-001",
+        "type": "task_started"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 3
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-001"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 9
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-001",
+        "type": "task_complete"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 29
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-002",
+        "type": "task_started"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 31
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-002"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 32
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-002",
+        "type": "task_complete"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 44
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-003",
+        "type": "task_started"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 46
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-003"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 47
+    },
+    {
+      "payload_keys": [
+        "first_window_id",
+        "message",
+        "previous_window_id",
+        "replacement_history",
+        "window_id",
+        "window_number"
+      ],
+      "record_type": "compacted",
+      "retained_values": {},
+      "source_file_slot": 4,
+      "source_ordinal": 57
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-003"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 59
+    },
+    {
+      "payload_keys": [
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "type": "context_compacted"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 61
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-003",
+        "type": "task_complete"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 69
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-004",
+        "type": "task_started"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 71
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-004"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 72
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-004",
+        "type": "task_complete"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 81
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-005",
+        "type": "task_started"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 83
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-005"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 84
+    },
+    {
+      "payload_keys": [
+        "agent_path",
+        "agent_thread_id",
+        "event_id",
+        "kind",
+        "occurred_at_ms",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "agent_path": "<path-redacted>",
+        "agent_thread_id": "agent-run-probe-001",
+        "type": "sub_agent_activity"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 91
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-005",
+        "type": "task_complete"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 103
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-008",
+        "type": "task_started"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 105
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-008"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 106
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-008",
+        "type": "task_complete"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 113
+    },
+    {
+      "payload_keys": [
+        "collaboration_mode_kind",
+        "model_context_window",
+        "started_at",
+        "trace_id",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-009",
+        "type": "task_started"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 115
+    },
+    {
+      "payload_keys": [
+        "approval_policy",
+        "approvals_reviewer",
+        "collaboration_mode",
+        "comp_hash",
+        "current_date",
+        "cwd",
+        "effort",
+        "file_system_sandbox_policy",
+        "model",
+        "multi_agent_mode",
+        "multi_agent_version",
+        "permission_profile",
+        "personality",
+        "realtime_active",
+        "sandbox_policy",
+        "summary",
+        "timezone",
+        "turn_id",
+        "workspace_roots"
+      ],
+      "record_type": "turn_context",
+      "retained_values": {
+        "model": "gpt-5.6-sol",
+        "multi_agent_version": "v2",
+        "turn_id": "turn-probe-009"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 117
+    },
+    {
+      "payload_keys": [
+        "completed_at",
+        "duration_ms",
+        "last_agent_message",
+        "time_to_first_token_ms",
+        "turn_id",
+        "type"
+      ],
+      "record_type": "event_msg",
+      "retained_values": {
+        "turn_id": "turn-probe-009",
+        "type": "task_complete"
+      },
+      "source_file_slot": 4,
+      "source_ordinal": 134
+    }
+  ],
+  "source": "codex_rollout",
+  "stability": "unstable_version_gated_key_only"
+}
