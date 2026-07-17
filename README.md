@@ -21,7 +21,7 @@ The `VedankPurohit/loupe` repository returned no existing project when checked o
 
 Loupe has a build-ready specification and a 16-ticket local implementation plan. Codex on macOS is the first planned live integration. The implementation must prove a real path from one-time setup through local capture, durable delivery, PostgreSQL persistence, near-real-time browser inspection, and scoped agent analysis.
 
-The runnable TypeScript workspace, PostgreSQL schema, versioned server API, React application, and first-Administrator Bootstrap journey are now established. The capture adapter, relay, ingestion, and investigation surfaces follow in later implementation tickets.
+The runnable TypeScript workspace, PostgreSQL schema, versioned server API, React application, first-Administrator Bootstrap journey, scoped device enrollment, capture Settings, and local pre-persistence redaction are now established. The capture adapter and full delivery/projection pipeline follow in later implementation tickets.
 
 ## Native development quickstart
 
@@ -64,6 +64,7 @@ The pnpm workspace keeps public contracts and persistence boundaries explicit:
 | `apps/web` | React/Vite browser application; it uses only `/api/v1` and does not access PostgreSQL |
 | `packages/contracts` | Shared Zod request/response schemas used for runtime validation, TypeScript types, and OpenAPI generation |
 | `packages/database` | Drizzle PostgreSQL schema, migrations, and migration runner |
+| `packages/relay` | Local SQLite capture queue and ordinary/Demo pre-persistence redaction boundary |
 
 One deployment represents exactly one Organization. The initial migration enforces that boundary while retaining Organization identifiers as a future migration seam. Bootstrap credentials use a random salt and scrypt verifier; browser session tokens are also persisted only as digests. Database contents do not contain a redeemable Bootstrap code or browser token.
 
@@ -76,6 +77,15 @@ All public HTTP routes live under `/api/v1`. The initial routes are:
 - `GET /api/v1/bootstrap/status`
 - `POST /api/v1/bootstrap/redeem`
 - `GET /api/v1/session`
+- `POST /api/v1/device-enrollment-grants`
+- `POST /api/v1/device-enrollments/redeem`
+- `GET /api/v1/devices`
+- `PATCH /api/v1/devices/:id/capture-policy`
+- `POST /api/v1/devices/:id/revoke`
+- `GET /api/v1/device/health`
+- `GET /api/v1/device/capture-policy`
+- `POST /api/v1/device/capture-records`
+- `GET /api/v1/capture-records/:id` (browser member only)
 
 OpenAPI and Fastify runtime validation derive from the same shared Zod schemas. Errors have a stable machine-readable envelope:
 
@@ -146,6 +156,7 @@ The Playwright harness owns a disposable `agent_observer_playwright` database, c
 - [`VISION.md`](./VISION.md) — product promise, architecture direction, governance, and longer-term opportunity space.
 - [`DEMO.md`](./DEMO.md) — the real Build Week demonstration contract.
 - [`CONTEXT.md`](./CONTEXT.md) — the shared domain glossary.
+- [`docs/enrollment-and-redaction.md`](./docs/enrollment-and-redaction.md) — enrollment grants, credential scopes, device Settings, revocation, and ordinary/Demo redaction behavior.
 - [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.
 - [Build-ready specification](./.scratch/coding-agent-observability/spec.md) — normative product, architecture, testing, and acceptance strategy.
 - [Implementation tickets](./.scratch/coding-agent-observability-implementation/issues/) — 16 typed, test-planned work packages with explicit blockers and documentation obligations.

@@ -1,6 +1,10 @@
 import { type FormEvent, useEffect, useState } from "react";
 
-import type { AuthenticatedSessionResponse } from "@workspace/contracts";
+import type {
+  AuthenticatedSessionResponse,
+  CapturePolicy,
+  EnrolledDevice,
+} from "@workspace/contracts";
 
 type View =
   | { kind: "loading" }
@@ -17,6 +21,20 @@ export function App() {
   const [view, setView] = useState<View>({ kind: "loading" });
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>();
+  const [devices, setDevices] = useState<EnrolledDevice[]>([]);
+  const [deviceError, setDeviceError] = useState<string>();
+  const [enrollmentGrant, setEnrollmentGrant] = useState<string>();
+
+  async function loadDevices() {
+    const response = await fetch("/api/v1/devices");
+    if (!response.ok) {
+      setDeviceError("Enrolled devices could not be loaded.");
+      return;
+    }
+    const body = (await response.json()) as { devices: EnrolledDevice[] };
+    setDevices(body.devices);
+    setDeviceError(undefined);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -24,7 +42,10 @@ export function App() {
       const sessionResponse = await fetch("/api/v1/session");
       if (sessionResponse.ok) {
         const session = (await sessionResponse.json()) as AuthenticatedSessionResponse;
-        if (!cancelled) setView({ kind: "session", session });
+        if (!cancelled) {
+          setView({ kind: "session", session });
+          await loadDevices();
+        }
         return;
       }
 
@@ -73,6 +94,7 @@ export function App() {
       const body = await readJson(response);
       if (response.ok) {
         setView({ kind: "session", session: body as AuthenticatedSessionResponse });
+        await loadDevices();
       } else {
         const error = body as { error?: { message?: string } } | undefined;
         setFormError(
@@ -84,6 +106,70 @@ export function App() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function createEnrollmentGrant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setDeviceError(undefined);
+    setEnrollmentGrant(undefined);
+    const data = new FormData(event.currentTarget);
+    const response = await fetch("/api/v1/device-enrollment-grants", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceName: data.get("deviceName") }),
+    });
+    const body = await readJson(response);
+    if (!response.ok) {
+      const error = body as { error?: { message?: string } } | undefined;
+      setDeviceError(
+        error?.error?.message ?? "The enrollment grant could not be created.",
+      );
+      return;
+    }
+    setEnrollmentGrant((body as { grant: string }).grant);
+  }
+
+  async function updatePolicy(
+    deviceId: string,
+    change: Partial<Pick<CapturePolicy, "ordinaryRedactionEnabled" | "demoCanaryEnabled">>,
+  ) {
+    setDevices((current) =>
+      current.map((device) =>
+        device.id === deviceId
+          ? {
+              ...device,
+              capturePolicy: { ...device.capturePolicy, ...change },
+            }
+          : device,
+      ),
+    );
+    const response = await fetch(`/api/v1/devices/${deviceId}/capture-policy`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(change),
+    });
+    if (!response.ok) {
+      setDeviceError("The capture policy could not be updated.");
+      await loadDevices();
+      return;
+    }
+    const capturePolicy = (await response.json()) as CapturePolicy;
+    setDevices((current) =>
+      current.map((device) =>
+        device.id === deviceId ? { ...device, capturePolicy } : device,
+      ),
+    );
+  }
+
+  async function revokeDevice(deviceId: string) {
+    const response = await fetch(`/api/v1/devices/${deviceId}/revoke`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      setDeviceError("The Device credential could not be revoked.");
+      return;
+    }
+    await loadDevices();
   }
 
   return (
@@ -125,24 +211,111 @@ export function App() {
       )}
 
       {view.kind === "session" && (
-        <section className="card" aria-labelledby="welcome-title">
-          <p className="eyebrow">Organization ready</p>
-          <h1 id="welcome-title">Welcome, {view.session.member.displayName}</h1>
-          <div className="identity-row">
-            <div>
-              <span className="detail-label">Organization</span>
-              <strong>{view.session.organization.name}</strong>
+        <>
+          <section className="card" aria-labelledby="welcome-title">
+            <p className="eyebrow">Organization ready</p>
+            <h1 id="welcome-title">Welcome, {view.session.member.displayName}</h1>
+            <div className="identity-row">
+              <div>
+                <span className="detail-label">Organization</span>
+                <strong>{view.session.organization.name}</strong>
+              </div>
+              <div>
+                <span className="detail-label">Role</span>
+                <strong className="role">
+                  {view.session.member.role === "administrator"
+                    ? "Administrator"
+                    : "Member"}
+                </strong>
+              </div>
             </div>
-            <div>
-              <span className="detail-label">Role</span>
-              <strong className="role">Administrator</strong>
+            <p className="lede">
+              Your authenticated browser session is active. Manage capture for
+              your enrolled Macs below.
+            </p>
+          </section>
+
+          <section className="card settings-card" aria-labelledby="devices-title">
+            <p className="eyebrow">Capture Settings</p>
+            <h2 id="devices-title">Enrolled devices</h2>
+            <form onSubmit={createEnrollmentGrant} className="grant-form">
+              <label>
+                Device name
+                <input name="deviceName" required maxLength={120} />
+              </label>
+              <button type="submit">Create enrollment grant</button>
+            </form>
+            {enrollmentGrant && (
+              <div className="grant-panel">
+                <span className="detail-label">Short-lived, single-use grant</span>
+                <output aria-label="Enrollment grant">{enrollmentGrant}</output>
+                <p>
+                  Exchange this grant during setup. It is not a browser session or
+                  a Device credential.
+                </p>
+              </div>
+            )}
+            {deviceError && <p role="alert" className="error">{deviceError}</p>}
+            <div className="device-list">
+              {devices.map((device) => (
+                <article className="device" key={device.id}>
+                  <div className="device-heading">
+                    <div>
+                      <h3>{device.name}</h3>
+                      <span className={`health health-${device.health}`}>
+                        {device.health === "healthy" ? "Healthy" : "Revoked"}
+                      </span>
+                    </div>
+                    <strong>Policy version {device.capturePolicy.version}</strong>
+                  </div>
+                  <p className="last-seen">
+                    {device.lastSeenAt
+                      ? `Last relay contact ${new Date(device.lastSeenAt).toLocaleString()}`
+                      : "Awaiting first relay contact"}
+                  </p>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={device.capturePolicy.ordinaryRedactionEnabled}
+                      disabled={device.health === "revoked"}
+                      onChange={(event) =>
+                        void updatePolicy(device.id, {
+                          ordinaryRedactionEnabled: event.currentTarget.checked,
+                        })
+                      }
+                    />
+                    Ordinary high-confidence redaction
+                  </label>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={device.capturePolicy.demoCanaryEnabled}
+                      disabled={device.health === "revoked"}
+                      onChange={(event) =>
+                        void updatePolicy(device.id, {
+                          demoCanaryEnabled: event.currentTarget.checked,
+                        })
+                      }
+                    />
+                    Demo redaction canary
+                  </label>
+                  {device.health !== "revoked" && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void revokeDevice(device.id)}
+                    >
+                      Revoke Device credential
+                    </button>
+                  )}
+                </article>
+              ))}
+              {devices.length === 0 && (
+                <p className="lede">No Macs are enrolled yet.</p>
+              )}
             </div>
-          </div>
-          <p className="lede">
-            Your authenticated browser session is active. Agent-session views
-            will appear here as capture is connected.
-          </p>
-        </section>
+          </section>
+        </>
       )}
 
       {view.kind === "established" && (

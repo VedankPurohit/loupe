@@ -8,6 +8,20 @@
       "when": 1784282402245,
       "tag": "0000_white_shiver_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784285876589,
+      "tag": "0001_bouncy_shadow_king",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784286473248,
+      "tag": "0002_lovely_captain_marvel",
+      "breakpoints": true
     }
   ]
 }

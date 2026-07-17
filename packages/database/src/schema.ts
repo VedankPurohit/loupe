@@ -4,6 +4,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -75,4 +76,97 @@ export const browserSessions = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (table) => [uniqueIndex("browser_sessions_token_digest_unique").on(table.tokenDigest)],
+);
+
+export const deviceEnrollmentGrants = pgTable(
+  "device_enrollment_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "cascade" }),
+    lookup: varchar("lookup", { length: 32 }).notNull(),
+    deviceName: text("device_name").notNull(),
+    verifierSalt: varchar("verifier_salt", { length: 128 }).notNull(),
+    verifierDigest: varchar("verifier_digest", { length: 128 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("device_enrollment_grants_lookup_unique").on(table.lookup),
+    index("device_enrollment_grants_member_idx").on(table.memberId),
+  ],
+);
+
+export const enrolledDevices = pgTable(
+  "enrolled_devices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    policyVersion: integer("policy_version").notNull().default(1),
+    ordinaryRedactionEnabled: boolean("ordinary_redaction_enabled")
+      .notNull()
+      .default(true),
+    demoCanaryEnabled: boolean("demo_canary_enabled").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("enrolled_devices_organization_idx").on(table.organizationId),
+    index("enrolled_devices_member_idx").on(table.memberId),
+  ],
+);
+
+export const deviceCredentials = pgTable(
+  "device_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => enrolledDevices.id, { onDelete: "cascade" }),
+    tokenDigest: varchar("token_digest", { length: 128 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("device_credentials_token_digest_unique").on(table.tokenDigest),
+    index("device_credentials_device_idx").on(table.deviceId),
+  ],
+);
+
+export const capturedRecords = pgTable(
+  "captured_records",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "restrict" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => enrolledDevices.id, { onDelete: "restrict" }),
+    source: varchar("source", { length: 32 }).notNull(),
+    content: text("content").notNull(),
+    sourcePath: text("source_path").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    redactions: jsonb("redactions").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("captured_records_organization_idx").on(table.organizationId),
+    index("captured_records_device_idx").on(table.deviceId),
+  ],
 );

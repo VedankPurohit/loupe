@@ -1,6 +1,6 @@
 import swagger from "@fastify/swagger";
 import cookie from "@fastify/cookie";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import {
   jsonSchemaTransform,
   serializerCompiler,
@@ -13,11 +13,26 @@ import {
   AuthenticatedSessionResponseSchema,
   BootstrapRedeemRequestSchema,
   BootstrapStatusResponseSchema,
+  CaptureRecordAcceptedResponseSchema,
+  CaptureRecordIdParamsSchema,
+  CaptureRecordSchema,
+  DeviceCapturePolicyResponseSchema,
+  DeviceEnrollmentGrantRequestSchema,
+  DeviceEnrollmentGrantResponseSchema,
+  DeviceEnrollmentRedeemRequestSchema,
+  DeviceEnrollmentResponseSchema,
+  DeviceIdParamsSchema,
+  DeviceHealthResponseSchema,
+  EnrolledDevicesResponseSchema,
   HealthResponseSchema,
+  UpdateDeviceCapturePolicyRequestSchema,
   browserSessionCookieName,
   browserSessionOpenApiSecurity,
   browserSessionOpenApiSecurityScheme,
   browserSessionSecuritySchemeName,
+  deviceCredentialOpenApiSecurity,
+  deviceCredentialOpenApiSecurityScheme,
+  deviceCredentialSecuritySchemeName,
 } from "@workspace/contracts";
 
 import { IdentityError, IdentityStore } from "./identity-store.js";
@@ -47,6 +62,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       components: {
         securitySchemes: {
           [browserSessionSecuritySchemeName]: browserSessionOpenApiSecurityScheme,
+          [deviceCredentialSecuritySchemeName]: deviceCredentialOpenApiSecurityScheme,
         },
       },
     },
@@ -72,6 +88,491 @@ export async function buildApp(options: BuildAppOptions = {}) {
       }
       return { status: "ok" as const, apiVersion: "v1" as const };
     },
+  );
+
+  app.post(
+    "/api/v1/device-enrollment-grants",
+    {
+      schema: {
+        operationId: "createDeviceEnrollmentGrant",
+        security: browserSessionOpenApiSecurity,
+        body: DeviceEnrollmentGrantRequestSchema,
+        response: {
+          201: DeviceEnrollmentGrantResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return reply
+        .status(201)
+        .send(
+          await identityStore.createDeviceEnrollmentGrant(
+            session.member.id,
+            request.body,
+          ),
+        );
+    },
+  );
+
+  app.post(
+    "/api/v1/device-enrollments/redeem",
+    {
+      schema: {
+        operationId: "redeemDeviceEnrollmentGrant",
+        body: DeviceEnrollmentRedeemRequestSchema,
+        response: {
+          201: DeviceEnrollmentResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      return reply
+        .status(201)
+        .send(await identityStore.redeemDeviceEnrollmentGrant(request.body.grant));
+    },
+  );
+
+  app.get(
+    "/api/v1/devices",
+    {
+      schema: {
+        operationId: "listEnrolledDevices",
+        security: browserSessionOpenApiSecurity,
+        response: {
+          200: EnrolledDevicesResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return { devices: await identityStore.listDevices(session.member.id) };
+    },
+  );
+
+  app.patch(
+    "/api/v1/devices/:id/capture-policy",
+    {
+      schema: {
+        operationId: "updateDeviceCapturePolicy",
+        security: browserSessionOpenApiSecurity,
+        params: DeviceIdParamsSchema,
+        body: UpdateDeviceCapturePolicyRequestSchema,
+        response: {
+          200: DeviceCapturePolicyResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const policy = await identityStore.updateDeviceCapturePolicy(
+        session.member.id,
+        request.params.id,
+        request.body,
+      );
+      if (!policy) {
+        return reply.status(404).send({
+          error: {
+            code: "ENROLLED_DEVICE_NOT_FOUND",
+            message: "The Enrolled device was not found.",
+          },
+        });
+      }
+      return policy;
+    },
+  );
+
+  app.post(
+    "/api/v1/devices/:id/revoke",
+    {
+      schema: {
+        operationId: "revokeDeviceCredential",
+        security: browserSessionOpenApiSecurity,
+        params: DeviceIdParamsSchema,
+        response: {
+          401: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const revoked = await identityStore.revokeDevice(
+        session.member.id,
+        request.params.id,
+      );
+      if (!revoked) {
+        return reply.status(404).send({
+          error: {
+            code: "ENROLLED_DEVICE_NOT_FOUND",
+            message: "The Enrolled device was not found.",
+          },
+        });
+      }
+      return reply.status(204).send();
+    },
+  );
+
+  app.get(
+    "/api/v1/device/capture-policy",
+    {
+      schema: {
+        operationId: "getOwnDeviceCapturePolicy",
+        security: deviceCredentialOpenApiSecurity,
+        response: {
+          200: DeviceCapturePolicyResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      const token = authorization?.startsWith("Bearer ")
+        ? authorization.slice("Bearer ".length)
+        : undefined;
+      const device = token
+        ? await identityStore.authenticateDevice(token)
+        : undefined;
+      if (!device) {
+        return reply.status(401).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_REQUIRED",
+            message: "A valid Device credential is required.",
+          },
+        });
+      }
+      return device.capturePolicy;
+    },
+  );
+
+  app.post(
+    "/api/v1/device/capture-records",
+    {
+      schema: {
+        operationId: "deliverCaptureRecord",
+        security: deviceCredentialOpenApiSecurity,
+        body: CaptureRecordSchema,
+        response: {
+          202: CaptureRecordAcceptedResponseSchema,
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      const token = authorization?.startsWith("Bearer ")
+        ? authorization.slice("Bearer ".length)
+        : undefined;
+      const device = token
+        ? await identityStore.authenticateDevice(token)
+        : undefined;
+      if (!device) {
+        return reply.status(401).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_REQUIRED",
+            message: "A valid Device credential is required.",
+          },
+        });
+      }
+      const persisted = await identityStore.persistCaptureRecord(
+        device.id,
+        request.body,
+      );
+      if (!persisted) {
+        return reply.status(401).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_REQUIRED",
+            message: "A valid Device credential is required.",
+          },
+        });
+      }
+      return reply.status(202).send({ id: request.body.id, accepted: true });
+    },
+  );
+
+  app.get(
+    "/api/v1/device/health",
+    {
+      schema: {
+        operationId: "getOwnDeviceHealth",
+        security: deviceCredentialOpenApiSecurity,
+        response: {
+          200: DeviceHealthResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      const token = authorization?.startsWith("Bearer ")
+        ? authorization.slice("Bearer ".length)
+        : undefined;
+      const device = token
+        ? await identityStore.authenticateDevice(token)
+        : undefined;
+      if (!device) {
+        return reply.status(401).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_REQUIRED",
+            message: "A valid Device credential is required.",
+          },
+        });
+      }
+      return {
+        deviceId: device.id,
+        status: "healthy" as const,
+        lastSeenAt: device.lastSeenAt!,
+        policyVersion: device.capturePolicy.version,
+      };
+    },
+  );
+
+  app.get(
+    "/api/v1/capture-records/:id",
+    {
+      schema: {
+        operationId: "getCaptureRecord",
+        security: browserSessionOpenApiSecurity,
+        params: CaptureRecordIdParamsSchema,
+        response: {
+          200: CaptureRecordSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const authorization = request.headers.authorization;
+      if (authorization?.startsWith("Bearer ")) {
+        const device = await identityStore.authenticateDevice(
+          authorization.slice("Bearer ".length),
+        );
+        if (device) {
+          return reply.status(403).send({
+            error: {
+              code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+              message: "A Device credential cannot access this Organization capability.",
+            },
+          });
+        }
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const capture = await identityStore.getCaptureRecord(
+        session.organization.id,
+        request.params.id,
+      );
+      if (!capture) {
+        return reply.status(404).send({
+          error: {
+            code: "CAPTURE_RECORD_NOT_FOUND",
+            message: "The capture record was not found.",
+          },
+        });
+      }
+      return capture;
+    },
+  );
+
+  const forbiddenDeviceCapability = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!identityStore) {
+      return reply.status(503).send({
+        error: {
+          code: "DATABASE_UNAVAILABLE",
+          message: "Database-backed identity is unavailable.",
+        },
+      });
+    }
+    const authorization = request.headers.authorization;
+    const token = authorization?.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : undefined;
+    const device = token ? await identityStore.authenticateDevice(token) : undefined;
+    if (!device) {
+      return reply.status(401).send({
+        error: {
+          code: "DEVICE_CREDENTIAL_REQUIRED",
+          message: "A valid Device credential is required.",
+        },
+      });
+    }
+    return reply.status(403).send({
+      error: {
+        code: "DEVICE_CREDENTIAL_SCOPE_FORBIDDEN",
+        message: "A Device credential cannot access this Organization capability.",
+      },
+    });
+  };
+
+  app.get(
+    "/api/v1/sessions",
+    {
+      schema: {
+        operationId: "denyDeviceSessionBrowsing",
+        security: deviceCredentialOpenApiSecurity,
+        response: { 401: ApiErrorSchema, 403: ApiErrorSchema, 503: ApiErrorSchema },
+      },
+    },
+    forbiddenDeviceCapability,
+  );
+  app.post(
+    "/api/v1/candidates",
+    {
+      schema: {
+        operationId: "denyDeviceCandidateSubmission",
+        security: deviceCredentialOpenApiSecurity,
+        response: { 401: ApiErrorSchema, 403: ApiErrorSchema, 503: ApiErrorSchema },
+      },
+    },
+    forbiddenDeviceCapability,
+  );
+  app.post(
+    "/api/v1/administration/actions",
+    {
+      schema: {
+        operationId: "denyDeviceAdministration",
+        security: deviceCredentialOpenApiSecurity,
+        response: { 401: ApiErrorSchema, 403: ApiErrorSchema, 503: ApiErrorSchema },
+      },
+    },
+    forbiddenDeviceCapability,
   );
 
   app.get(
