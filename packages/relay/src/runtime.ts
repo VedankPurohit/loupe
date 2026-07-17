@@ -179,10 +179,28 @@ function otlpAttribute(record: unknown, wanted: string): string | undefined {
 }
 
 /**
+ * Codex 0.144.5 trace exports interleave meaningful spans with hundreds of
+ * internal Rust tracing spans per session (append_items, receiving,
+ * handle_responses, persist_rollout_items, ...). We keep `codex.*` spans, the
+ * source-defined `turn` span, and any span carrying `turn.id`/`thread.id`
+ * correlation attributes (see
+ * .scratch/coding-agent-observability/research/codex-capture-contract.md).
+ */
+function isMeaningfulSpan(span: unknown, name: string): boolean {
+  if (name.startsWith("codex.") || name === "turn") return true;
+  return (
+    otlpAttribute(span, "turn.id") !== undefined ||
+    otlpAttribute(span, "thread.id") !== undefined
+  );
+}
+
+/**
  * Splits a real OTLP export envelope into individual records so every source
  * event carries exactly one log record or span — the shape the adapter and
  * server projection consume. An unrecognizable body falls back to one
- * whole-envelope event rather than dropping evidence.
+ * whole-envelope event rather than dropping evidence. Internal trace spans are
+ * filtered, but never silently: each envelope's drops are disclosed in one
+ * `otlp.traces.filtered` summary record listing span names and counts.
  */
 export function splitOtlpEnvelope(
   kind: "logs" | "traces",
@@ -210,6 +228,7 @@ export function splitOtlpEnvelope(
       }
     }
   } else {
+    const droppedSpans = new Map<string, number>();
     for (const resource of asArray(body.resourceSpans ?? body.resource_spans)) {
       const scopes = asArray(
         (resource as Record<string, unknown>).scopeSpans ??
@@ -217,13 +236,30 @@ export function splitOtlpEnvelope(
       );
       for (const scope of scopes) {
         for (const span of asArray((scope as Record<string, unknown>).spans)) {
-          const name = (span as { name?: unknown }).name;
+          const rawName = (span as { name?: unknown }).name;
+          const name = typeof rawName === "string" ? rawName : "";
+          if (!isMeaningfulSpan(span, name)) {
+            const key = name.length > 0 ? name : "(unnamed)";
+            droppedSpans.set(key, (droppedSpans.get(key) ?? 0) + 1);
+            continue;
+          }
           records.push({
-            producerEvent: typeof name === "string" && name.length > 0 ? name : "otlp.traces",
+            producerEvent: name.length > 0 ? name : "otlp.traces",
             payload: { span: span as Record<string, unknown> },
           });
         }
       }
+    }
+    if (droppedSpans.size > 0) {
+      records.push({
+        producerEvent: "otlp.traces.filtered",
+        payload: {
+          filtered: {
+            dropped_span_total: [...droppedSpans.values()].reduce((sum, count) => sum + count, 0),
+            dropped_spans: Object.fromEntries(droppedSpans),
+          },
+        },
+      });
     }
   }
   return records.length > 0

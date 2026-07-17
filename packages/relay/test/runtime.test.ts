@@ -128,6 +128,86 @@ describe("relay capture runtime", () => {
     ]);
   });
 
+  it("filters internal trace spans while disclosing every drop in one summary record", () => {
+    const records = splitOtlpEnvelope("traces", {
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                { name: "codex.request" },
+                { name: "append_items" },
+                { name: "append_items" },
+                { name: "receiving" },
+                { name: "turn" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(records.map((record) => record.producerEvent)).toEqual([
+      "codex.request",
+      "turn",
+      "otlp.traces.filtered",
+    ]);
+    const summary = records.at(-1);
+    expect(summary?.payload).toEqual({
+      filtered: {
+        dropped_span_total: 3,
+        dropped_spans: { append_items: 2, receiving: 1 },
+      },
+    });
+    // The summary discloses names and counts only — never span bodies.
+    expect(JSON.stringify(summary?.payload)).not.toContain('"span"');
+  });
+
+  it("keeps unnamed spans that carry turn correlation attributes", () => {
+    const records = splitOtlpEnvelope("traces", {
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  name: "handle_responses",
+                  attributes: [{ key: "turn.id", value: { stringValue: "turn-9" } }],
+                },
+                {
+                  attributes: [{ key: "thread.id", value: { stringValue: "thread-3" } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(records.map((record) => record.producerEvent)).toEqual([
+      "handle_responses",
+      "otlp.traces",
+    ]);
+    expect(records.every((record) => "span" in record.payload)).toBe(true);
+  });
+
+  it("reduces an envelope of only internal spans to just the filtered summary", () => {
+    const records = splitOtlpEnvelope("traces", {
+      resourceSpans: [
+        { scopeSpans: [{ spans: [{ name: "persist_rollout_items" }, { name: "auth" }] }] },
+      ],
+    });
+    expect(records).toEqual([
+      {
+        producerEvent: "otlp.traces.filtered",
+        payload: {
+          filtered: {
+            dropped_span_total: 2,
+            dropped_spans: { persist_rollout_items: 1, auth: 1 },
+          },
+        },
+      },
+    ]);
+  });
+
   it("closes setup verification lifecycle so mandatory standards are not deferred", async () => {
     const stateDir = join(tmpdir(), `relay-runtime-${randomUUID()}`);
     roots.push(stateDir);

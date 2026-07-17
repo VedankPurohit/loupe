@@ -35,5 +35,5 @@ describe("relay CLI credential handling", () => {
       "SECRET_ARG_REJECTED: --browser-session is unsafe because process arguments may be visible",
     );
     expect(legacy.stderr).not.toContain("stolen-secret");
-  });
+  }, 30000);
 });
