@@ -182,6 +182,7 @@ describe("spawned diagnostic CLI", () => {
           ],
           timeline: [],
           evidence: {
+            apiRequests: [],
             tools: [],
             lifecycle: [],
             tokenUsage: [],
