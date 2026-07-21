@@ -205,8 +205,8 @@ function otlpAttribute(record: unknown, wanted: string): string | undefined {
  * internal Rust tracing spans per session (append_items, receiving,
  * handle_responses, persist_rollout_items, ...). We keep `codex.*` spans, the
  * source-defined `turn` span, and any span carrying `turn.id`/`thread.id`
- * correlation attributes (see
- * .scratch/coding-agent-observability-continuation/research/codex-capture-and-trust-contracts.md).
+ * correlation attributes (derived from an audit of real Codex 0.144.5 trace
+ * exports).
  */
 function isMeaningfulSpan(span: unknown, name: string): boolean {
   if (name.startsWith("codex.") || name === "turn") return true;

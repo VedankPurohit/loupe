@@ -2,20 +2,10 @@
 
 > See inside every agent run.
 
-> [!IMPORTANT]
-> **Loupe is a temporary working codename and is expected to change.** Do not treat it as a final brand, register naming-dependent infrastructure without confirmation, or bake it into durable API, database, credential, or deployment identifiers.
-
 Loupe is an open-source, self-hosted observability and organizational-learning platform for coding agents. It captures real Codex Sessions, reconstructs Root and Subagent activity, helps teams diagnose failures and compare effective workflows, and turns cited evidence into human-approved Organization standards.
 
-## Project identity
-
-- **Temporary product and project codename:** Loupe
-- **Repository slug:** `loupe`
-- **Intended GitHub repository:** `VedankPurohit/loupe`
-- **Package namespace:** undecided; the unscoped npm and PyPI name `loupe` is already occupied
-- **Website domain:** undecided
-
-The `VedankPurohit/loupe` repository returned no existing project when checked on July 17, 2026. It has not been created or reserved by this repository update. The repository slug may change with the final product name.
+> [!NOTE]
+> "Loupe" is the working name for this Build Week project.
 
 ## Current status
 
@@ -218,10 +208,7 @@ pnpm test:compose
 - [`docs/production-investigation-interface.md`](./docs/production-investigation-interface.md) — selected production interface, synchronized evidence views, accessibility, live recovery, and deep links.
 - [`docs/investigation-prototypes.md`](./docs/investigation-prototypes.md) — three working ticket-11 investigation directions, their run commands, evaluation matrix, and screenshot checklist for the user-selection gate.
 - [`docs/macos-codex-setup.md`](./docs/macos-codex-setup.md) — setup preview and consent, `launchd`, configuration backup/restore, disconnect, uninstall, recovery, and the executable first-day checkpoint.
-- [Continuation Wayfinder map](./.scratch/coding-agent-observability-continuation/map.md) — capture, synthetic-data, UI, identity, and deployment decisions with supporting research.
-- [Current specification](./.scratch/coding-agent-observability-local-presentability/spec.md) — normative local-presentability, multi-Organization, authentication, testing, and acceptance strategy.
-- [Current implementation tickets](./.scratch/coding-agent-observability-local-presentability/issues/) — 17 tracer-bullet work packages with explicit blockers and public testing seams.
 
-## Publishing guardrail
+## License
 
-The local Git repository currently has no remote. Do not create, rename, push, or publish a remote repository without explicit authorization. When publication is authorized, use Vedank Purohit's personal GitHub account, [`VedankPurohit`](https://github.com/VedankPurohit), and do not publish from a work account.
+Released under the [MIT License](./LICENSE).
