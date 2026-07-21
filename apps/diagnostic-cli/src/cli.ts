@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, open as openFile, readFile, stat, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 import {
   AnalysisCredentialCreateResponseSchema,
-  AnalysisCredentialsResponseSchema,
+  AnalysisCredentialStatusResponseSchema,
   ApiErrorSchema,
   CandidateSubmissionRequestSchema,
   CandidateSubmissionResponseSchema,
@@ -22,24 +24,28 @@ import {
   type Turn,
 } from "@workspace/contracts";
 
+import { authorizeAnalysisCredential } from "./browser-authorization.js";
+
 const usage = `Usage:
-  coding-agent-analysis inspect <session-id> [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis inspect <session-id> [--include-seeded] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
   coding-agent-analysis search [--query <text>] [--member <id>] [--repository <text>] [--include-seeded] [--page <n>] [--page-size <n>] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
   coding-agent-analysis compare <session-id[:turn-id]>... --claim <statement> [--kind pattern|outcome|causal|productivity] [--include-seeded] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
-  coding-agent-analysis cite <session-id:turn-id:activity-id> [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis cite <session-id:turn-id:activity-id> [--include-seeded] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
   coding-agent-analysis candidate submit <manifest.json> [--json] [--server-url <url>] [--analysis-credential-file <path|->]
   coding-agent-analysis watch [--max-events <n>] [--json] [--server-url <url>] [--analysis-credential-file <path|->]
-  coding-agent-analysis credential create --name <label> [--json] [--server-url <url>] [--browser-session-file <path|->]
-  coding-agent-analysis credential list [--json] [--server-url <url>] [--browser-session-file <path|->]
-  coding-agent-analysis credential revoke <credential-id> [--server-url <url>] [--browser-session-file <path|->]
-  coding-agent-analysis examples import starter-v1 [--server-url <url>] [--browser-session-file <path|->]
+  coding-agent-analysis credential create --name <label> [--output <path>] [--json] [--server-url <url>]
+  coding-agent-analysis credential status [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis credential revoke [--json] [--server-url <url>] [--analysis-credential-file <path|->]
+  coding-agent-analysis credential clear [--json] [--analysis-credential-file <path>]
+  coding-agent-analysis examples import <starter-v1|rich-v1> [--json] [--server-url <url>] [--browser-session-file <path|->]
 
 Environment alternatives:
   CODING_AGENT_OBSERVABILITY_SERVER_URL            Server base URL (default: http://127.0.0.1:3000)
   CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL   Revocable Analysis credential
+  CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL_FILE  Credential-file path (default: ~/.config/loupe/analysis-credential)
   CODING_AGENT_OBSERVABILITY_BROWSER_SESSION       Value of the browser_session cookie
 
-Credential files must be regular files with mode 0600. Use - to read one credential from stdin.`;
+Analysis credential creation opens a browser confirmation and writes the secret directly to an owner-only file. Credential files must be regular files with mode 0600. Use - to read one credential from stdin.`;
 
 interface Authentication {
   analysisCredential?: string;
@@ -51,6 +57,7 @@ interface InspectOptions {
   serverUrl: URL;
   authentication: Authentication;
   structured: boolean;
+  includeSeeded: boolean;
 }
 
 function readValue(args: string[], index: number, flag: string): string {
@@ -67,6 +74,14 @@ const secretFileFlags = new Map([
   ["--analysis-credential-file", "CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL"],
   ["--browser-session-file", "CODING_AGENT_OBSERVABILITY_BROWSER_SESSION"],
 ] as const);
+let activeAnalysisCredentialFile: string | undefined;
+
+function defaultAnalysisCredentialFile(): string {
+  return resolve(
+    process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL_FILE ??
+      join(homedir(), ".config", "loupe", "analysis-credential"),
+  );
+}
 
 function rejectLegacySecretArguments(args: string[]): void {
   for (const flag of ["--analysis-credential", "--browser-session"] as const) {
@@ -121,9 +136,55 @@ async function normalizeCredentialInputs(args: string[]): Promise<string[]> {
       path,
       flag === "--analysis-credential-file" ? "Analysis credential" : "browser Session",
     );
+    if (flag === "--analysis-credential-file" && path !== "-") {
+      activeAnalysisCredentialFile = resolve(path);
+    }
     index += 1;
   }
   return normalized;
+}
+
+async function loadDefaultAnalysisCredential(args: string[]): Promise<void> {
+  if (
+    process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL ||
+    args.includes("--analysis-credential-file") ||
+    (args[0] === "credential" && args[1] === "create")
+  ) {
+    return;
+  }
+  const path = defaultAnalysisCredentialFile();
+  try {
+    process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL =
+      await readSecretInput(path, "Analysis credential");
+    activeAnalysisCredentialFile = path;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function assertCredentialFileAvailable(path: string): Promise<void> {
+  try {
+    await stat(path);
+    throw new UsageError(
+      `CREDENTIAL_FILE_EXISTS: ${path} already exists. Revoke or clear it before creating another credential.`,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function writeCredentialFile(path: string, credential: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const handle = await openFile(path, "wx", 0o600);
+  try {
+    await handle.writeFile(`${credential}\n`, { encoding: "utf8" });
+    await handle.sync();
+  } catch (error) {
+    await handle.close();
+    await unlink(path).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
 }
 
 class ApiRequestError extends Error {
@@ -145,6 +206,7 @@ function parseInspectOptions(args: string[]): InspectOptions {
   let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
   let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let structured = false;
+  let includeSeeded = false;
 
   for (let index = 2; index < args.length; index += 1) {
     const flag = args[index];
@@ -153,6 +215,8 @@ function parseInspectOptions(args: string[]): InspectOptions {
       index += 1;
     } else if (flag === "--json") {
       structured = true;
+    } else if (flag === "--include-seeded") {
+      includeSeeded = true;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
     }
@@ -170,6 +234,7 @@ function parseInspectOptions(args: string[]): InspectOptions {
     serverUrl: parsedServerUrl,
     authentication: { analysisCredential, browserSession },
     structured,
+    includeSeeded,
   };
 }
 
@@ -200,14 +265,70 @@ function formatAgentRun(run: AgentRun, label: string): string[] {
   return lines;
 }
 
+function formatTurnEvidence(detail: ExecutionSessionDetail, turnId: string): string[] {
+  const turn = detail.turns.find((candidate) => candidate.id === turnId);
+  const associated = <T extends { turnAssociation: { turnId: string | null } }>(items: T[]) =>
+    items.filter((item) => item.turnAssociation.turnId === turnId);
+  const tools = associated(detail.evidence.tools);
+  const requests = associated(detail.evidence.apiRequests);
+  const tokens = associated(detail.evidence.tokenUsage);
+  const lifecycle = associated(detail.evidence.lifecycle);
+  const lines = [
+    `  Evidence state: ${evidenceStrength(turn?.evidence ?? { stability: ["unavailable"], derivation: "unavailable", sourceEventIds: [] })}`,
+    `  Tools (${tools.length})`,
+    ...tools.map((tool) =>
+      `    ${tool.id}: ${tool.toolName}; outcome ${tool.outcome}; approval ${tool.approval}; retries ${tool.retryCount ?? "unavailable"}; association ${tool.turnAssociation.strength}; evidence ${evidenceStrength(tool.evidence)}`,
+    ),
+    `  Model evidence (${tokens.length} Token samples)`,
+    ...tokens.map((sample) => {
+      const categories = Object.entries(sample.categories)
+        .map(([name, value]) => `${name}=${value ?? "unavailable"}`)
+        .join(", ");
+      return `    ${sample.id}: logical model ${sample.model ?? "unavailable"}; source ${sample.sourceKind}; ${categories}; association ${sample.turnAssociation.strength}; evidence ${evidenceStrength(sample.evidence)}`;
+    }),
+    "    Transport caveat: API attempts are not stable logical model requests.",
+    ...requests.map((request) =>
+      `    transport ${request.id}: attempt ${request.attempt ?? "unavailable"}; status ${request.statusCode ?? "unavailable"}; success ${request.success === null ? "unavailable" : request.success}; association ${request.turnAssociation.strength}; evidence ${evidenceStrength(request.evidence)}`,
+    ),
+    `  Context: ${detail.evidence.context.occupancy.length ? "occupancy samples captured" : "occupancy unavailable"}; contribution ${detail.evidence.context.contribution.status}`,
+    `    Context caveat: ${detail.evidence.context.contribution.note}`,
+    `  Lifecycle (${lifecycle.length})`,
+    ...lifecycle.map((event) => `    ${event.id}: ${event.kind}; ${event.event}; association ${event.turnAssociation.strength}`),
+  ];
+  return lines;
+}
+
+function formatCapabilityEvidence(detail: ExecutionSessionDetail): string[] {
+  return [
+    `Capabilities (${detail.evidence.capabilities.length})`,
+    ...detail.evidence.capabilities.map(
+      (capability) => `  ${capability.capability}: ${capability.state}; ${capability.note}; evidence ${evidenceStrength(capability.evidence)}`,
+    ),
+    `Cost estimates (${detail.evidence.costEstimates.length})`,
+    ...detail.evidence.costEstimates.map(
+      (estimate) => `  ${estimate.tokenUsageId}: ${estimate.status === "estimated" && estimate.amount !== null ? `${estimate.amount} ${estimate.currency ?? ""}`.trim() : "unavailable"}; ${estimate.billingCaveat}`,
+    ),
+  ];
+}
+
 function formatDetail(detail: ExecutionSessionDetail): string {
   const { session } = detail;
+  const seeded = session.synthetic.kind === "seeded";
+  const seededPrefix = seeded ? "[Seeded] " : "";
+  const exampleOrigin = (evidence: AgentRun["identityEvidence"]) =>
+    evidence.references?.some(
+      (reference) => reference.origin === "example_pack_server_controlled",
+    )
+      ? `  Evidence origin: server-controlled Example pack ${session.synthetic.examplePackVersion}\n`
+      : "";
   const root = detail.agentRuns.find(
     (run) => run.id === session.rootAgentRunId && run.kind === "root",
   );
   const subagents = detail.agentRuns.filter((run) => run.kind === "subagent");
   const lines = [
-    `Session: ${session.id}`,
+    `${seededPrefix}Session: ${session.id}`,
+    `Owner: ${session.ownerProfile.displayName}${session.ownerProfile.isExample ? " [Example member]" : ""}`,
+    ...(seeded ? [`Example pack: ${session.synthetic.examplePackVersion} · illustrative only`] : []),
     `Activity state: ${session.activityState}`,
     `Observed: ${session.firstObservedAt} to ${session.lastObservedAt}`,
     `Completion: ${session.completion.status}; evidence ${session.completion.evidence}`,
@@ -216,17 +337,19 @@ function formatDetail(detail: ExecutionSessionDetail): string {
     "",
     `Activity episodes (${detail.activities.length})`,
     ...detail.activities.flatMap((activity) => [
-      `Activity: ${activity.id}`,
+      `${seededPrefix}Activity: ${activity.id}`,
       `  State: ${activity.state}; source ${activity.source}`,
       `  Observed: ${activity.startedAt} to ${activity.endedAt ?? "active"}`,
     ]),
     "",
     `Turns (${detail.turns.length})`,
     ...detail.turns.flatMap((turn) => [
-      `Turn: ${turn.id}`,
+      `${seededPrefix}Turn: ${turn.id}`,
       `  Agent run: ${turn.agentRunId}`,
       `  Evidence strength: ${evidenceStrength(turn.evidence)}`,
+      exampleOrigin(turn.evidence).trimEnd(),
       `  Observed: ${turn.firstObservedAt} to ${turn.lastObservedAt}`,
+      ...formatTurnEvidence(detail, turn.id),
     ]),
     "",
     ...(root
@@ -235,6 +358,8 @@ function formatDetail(detail: ExecutionSessionDetail): string {
     "",
     `Subagent runs (${subagents.length})`,
     ...subagents.flatMap((run) => formatAgentRun(run, "Subagent run")),
+    "",
+    ...formatCapabilityEvidence(detail),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -270,6 +395,11 @@ async function inspect(options: InspectOptions): Promise<void> {
   if (!parsed.success) {
     throw new Error("INVALID_RESPONSE: Server returned an invalid Session detail.");
   }
+  if (parsed.data.session.synthetic.kind === "seeded" && !options.includeSeeded) {
+    throw new UsageError(
+      "SEEDED_INCLUSION_REQUIRED: Re-run inspect with --include-seeded to view this illustrative Session.",
+    );
+  }
   process.stdout.write(
     options.structured
       ? `${JSON.stringify(parsed.data, null, 2)}\n`
@@ -279,16 +409,18 @@ async function inspect(options: InspectOptions): Promise<void> {
 
 async function authenticatedJson(
   endpoint: URL,
-  authentication: Authentication,
+  authentication?: Authentication,
   init?: RequestInit,
 ): Promise<unknown> {
   const response = await fetch(endpoint, {
     ...init,
     headers: {
       accept: "application/json",
-      ...(authentication.analysisCredential
+      ...(authentication?.analysisCredential
         ? { authorization: `Bearer ${authentication.analysisCredential}` }
-        : { cookie: `${browserSessionCookieName}=${authentication.browserSession}` }),
+        : authentication?.browserSession
+          ? { cookie: `${browserSessionCookieName}=${authentication.browserSession}` }
+          : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -529,6 +661,7 @@ async function cite(args: string[]): Promise<void> {
   let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
   let analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
   let structured = false;
+  let includeSeeded = false;
   for (let index = 2; index < args.length; index += 1) {
     const flag = args[index]!;
     if (flag === "--server-url") {
@@ -536,6 +669,8 @@ async function cite(args: string[]): Promise<void> {
       index += 1;
     } else if (flag === "--json") {
       structured = true;
+    } else if (flag === "--include-seeded") {
+      includeSeeded = true;
     } else {
       throw new UsageError(`Unknown option: ${flag}`);
     }
@@ -568,6 +703,11 @@ async function cite(args: string[]): Promise<void> {
   if (!turn.success || !activity.success || activity.data.turnId !== turnId) {
     throw new Error("INVALID_RESPONSE: Server returned an invalid Evidence citation.");
   }
+  if (turn.data.session.synthetic.kind === "seeded" && !includeSeeded) {
+    throw new UsageError(
+      "SEEDED_INCLUSION_REQUIRED: Re-run cite with --include-seeded to view this illustrative citation.",
+    );
+  }
   const result = {
     citation: {
       sessionId,
@@ -586,7 +726,7 @@ async function cite(args: string[]): Promise<void> {
           baseUrl,
         ).toString(),
         browser: new URL(
-          `/?session=${encodedSession}&turn=${encodedTurn}&activity=${encodedActivity}`,
+          `/?session=${encodedSession}&turn=${encodedTurn}&activity=${encodedActivity}${turn.data.session.synthetic.kind === "seeded" ? "&includeSeeded=true" : ""}`,
           baseUrl,
         ).toString(),
       },
@@ -787,22 +927,128 @@ async function watch(args: string[]): Promise<void> {
 
 async function manageCredential(args: string[]): Promise<void> {
   const action = args[1];
-  if (!action || !["create", "list", "revoke"].includes(action)) {
-    throw new UsageError("Expected credential create, list, or revoke.");
+  if (!action || !["create", "status", "revoke", "clear"].includes(action)) {
+    throw new UsageError("Expected credential create, status, revoke, or clear.");
   }
   let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
   let structured = false;
   let name: string | undefined;
-  const credentialId = action === "revoke" ? args[2] : undefined;
-  let index = action === "revoke" ? 3 : 2;
-  for (; index < args.length; index += 1) {
+  let credentialFile = action === "create" ? defaultAnalysisCredentialFile() : activeAnalysisCredentialFile;
+  for (let index = 2; index < args.length; index += 1) {
     const flag = args[index]!;
     if (flag === "--server-url") {
       serverUrl = readValue(args, index, flag);
       index += 1;
     } else if (flag === "--name") {
       name = readValue(args, index, flag);
+      index += 1;
+    } else if (flag === "--output" && action === "create") {
+      credentialFile = resolve(readValue(args, index, flag));
+      index += 1;
+    } else if (flag === "--json") {
+      structured = true;
+    } else {
+      throw new UsageError(`Unknown option: ${flag}`);
+    }
+  }
+  const parsedServerUrl = parseServerUrl(serverUrl);
+  if (action === "create") {
+    if (!name) throw new UsageError("credential create requires --name.");
+    if (!credentialFile) throw new UsageError("credential create requires an output file.");
+    await assertCredentialFileAvailable(credentialFile);
+    const grant = await authorizeAnalysisCredential({
+      serverUrl: parsedServerUrl,
+      name,
+    });
+    const parsed = AnalysisCredentialCreateResponseSchema.safeParse(
+      await authenticatedJson(
+        new URL("/api/v1/analysis-credential-grants/redeem", parsedServerUrl),
+        undefined,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ grant }),
+        },
+      ),
+    );
+    if (!parsed.success) throw new Error("INVALID_RESPONSE: Invalid credential data.");
+    await writeCredentialFile(credentialFile, parsed.data.credential);
+    const result = {
+      analysisCredential: parsed.data.analysisCredential,
+      credentialFile,
+    };
+    process.stdout.write(
+      structured
+        ? `${JSON.stringify(result, null, 2)}\n`
+        : `Analysis credential ${parsed.data.analysisCredential.id} saved to ${credentialFile}.\n`,
+    );
+    return;
+  }
+  if (action === "clear") {
+    if (!credentialFile) {
+      throw new UsageError(
+        "credential clear requires --analysis-credential-file or a default credential file.",
+      );
+    }
+    await unlink(credentialFile);
+    process.stdout.write(
+      structured
+        ? `${JSON.stringify({ credentialFileRemoved: true })}\n`
+        : `Removed the local Analysis credential file.\n`,
+    );
+    return;
+  }
+  const analysisCredential = process.env.CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL;
+  if (!analysisCredential) {
+    throw new UsageError(
+      "An Analysis credential is required via --analysis-credential-file or CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL.",
+    );
+  }
+  if (action === "status") {
+    const parsed = AnalysisCredentialStatusResponseSchema.safeParse(
+      await authenticatedJson(
+        new URL("/api/v1/analysis-credential", parsedServerUrl),
+        { analysisCredential },
+      ),
+    );
+    if (!parsed.success) throw new Error("INVALID_RESPONSE: Invalid credential status.");
+    process.stdout.write(
+      structured
+        ? `${JSON.stringify(parsed.data, null, 2)}\n`
+        : `${parsed.data.analysisCredential.name}: active for ${parsed.data.organization.name}.\n`,
+    );
+    return;
+  }
+  await authenticatedJson(
+    new URL("/api/v1/analysis-credential/revoke", parsedServerUrl),
+    { analysisCredential },
+    { method: "POST" },
+  );
+  const credentialFileRemoved = Boolean(credentialFile);
+  if (credentialFile) await unlink(credentialFile);
+  process.stdout.write(
+    structured
+      ? `${JSON.stringify({ revoked: true, credentialFileRemoved })}\n`
+      : `Revoked the active Analysis credential${credentialFileRemoved ? " and removed its local file" : ""}.\n`,
+  );
+}
+
+async function importExamples(args: string[]): Promise<void> {
+  const version = args[2];
+  if (
+    args[1] !== "import" ||
+    !version ||
+    !(version === "starter-v1" || version === "rich-v1")
+  ) {
+    throw new UsageError("Expected examples import <starter-v1|rich-v1>.");
+  }
+  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
+  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
+  let structured = false;
+  for (let index = 3; index < args.length; index += 1) {
+    const flag = args[index]!;
+    if (flag === "--server-url") {
+      serverUrl = readValue(args, index, flag);
       index += 1;
     } else if (flag === "--json") {
       structured = true;
@@ -815,90 +1061,41 @@ async function manageCredential(args: string[]): Promise<void> {
       "A browser Session is required via --browser-session-file or CODING_AGENT_OBSERVABILITY_BROWSER_SESSION.",
     );
   }
-  const endpoint = new URL("/api/v1/analysis-credentials", parseServerUrl(serverUrl));
-  if (action === "create") {
-    if (!name) throw new UsageError("credential create requires --name.");
-    const parsed = AnalysisCredentialCreateResponseSchema.safeParse(
-      await authenticatedJson(
-        endpoint,
-        { browserSession },
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name }),
-        },
-      ),
-    );
-    if (!parsed.success) throw new Error("INVALID_RESPONSE: Invalid credential data.");
-    process.stdout.write(
-      structured
-        ? `${JSON.stringify(parsed.data, null, 2)}\n`
-        : `Analysis credential ${parsed.data.analysisCredential.id}\n${parsed.data.credential}\n`,
-    );
-    return;
-  }
-  if (action === "list") {
-    const parsed = AnalysisCredentialsResponseSchema.safeParse(
-      await authenticatedJson(endpoint, { browserSession }),
-    );
-    if (!parsed.success) throw new Error("INVALID_RESPONSE: Invalid credential data.");
-    process.stdout.write(
-      structured
-        ? `${JSON.stringify(parsed.data, null, 2)}\n`
-        : parsed.data.analysisCredentials
-            .map(
-              (credential) =>
-                `${credential.id}  ${credential.name}  ${credential.revokedAt ? "revoked" : "active"}`,
-            )
-            .join("\n") + "\n",
-    );
-    return;
-  }
-  if (!credentialId) throw new UsageError("credential revoke requires an id.");
-  await authenticatedJson(
-    new URL(
-      `/api/v1/analysis-credentials/${encodeURIComponent(credentialId)}/revoke`,
-      parseServerUrl(serverUrl),
-    ),
-    { browserSession },
-    { method: "POST" },
-  );
-  process.stdout.write(
-    structured
-      ? `${JSON.stringify({ id: credentialId, revoked: true })}\n`
-      : `Revoked Analysis credential ${credentialId}.\n`,
-  );
-}
-
-async function importExamples(args: string[]): Promise<void> {
-  if (args[1] !== "import" || args[2] !== "starter-v1") {
-    throw new UsageError("Expected examples import starter-v1.");
-  }
-  let serverUrl = process.env.CODING_AGENT_OBSERVABILITY_SERVER_URL ?? "http://127.0.0.1:3000";
-  let browserSession = process.env.CODING_AGENT_OBSERVABILITY_BROWSER_SESSION;
-  for (let index = 3; index < args.length; index += 1) {
-    const flag = args[index]!;
-    if (flag === "--server-url") {
-      serverUrl = readValue(args, index, flag);
-      index += 1;
-    } else {
-      throw new UsageError(`Unknown option: ${flag}`);
-    }
-  }
-  if (!browserSession) {
-    throw new UsageError(
-      "A browser Session is required via --browser-session-file or CODING_AGENT_OBSERVABILITY_BROWSER_SESSION.",
-    );
-  }
   const endpoint = new URL(
-    "/api/v1/administration/example-packs/starter-v1/import",
+    `/api/v1/administration/example-packs/${version}/import`,
     parseServerUrl(serverUrl),
   );
-  const parsed = ExamplePackImportResponseSchema.safeParse(
-    await authenticatedJson(endpoint, { browserSession }, { method: "POST" }),
-  );
+  const responseBody = await authenticatedJson(endpoint, { browserSession }, { method: "POST" });
+  const parsed = ExamplePackImportResponseSchema.safeParse(responseBody);
   if (!parsed.success) {
-    throw new Error("INVALID_RESPONSE: Server returned invalid Example-pack data.");
+    // Older local servers predate the optional import counts. Keep the CLI
+    // useful during a rolling upgrade without inventing evidence counts.
+    const legacy = responseBody as {
+      version?: unknown;
+      imported?: unknown;
+      exampleMemberId?: unknown;
+      sessionIds?: unknown;
+      syntheticDesignation?: unknown;
+    } | null;
+    if (
+      !legacy ||
+      legacy.version !== version ||
+      typeof legacy.imported !== "boolean" ||
+      typeof legacy.exampleMemberId !== "string" ||
+      !Array.isArray(legacy.sessionIds) ||
+      legacy.sessionIds.some((id) => typeof id !== "string") ||
+      legacy.syntheticDesignation !== "seeded"
+    ) {
+      throw new Error("INVALID_RESPONSE: Server returned invalid Example-pack data.");
+    }
+    if (structured) {
+      process.stdout.write(`${JSON.stringify(responseBody, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(
+      `${legacy.imported ? "Imported" : "Already imported"} ${version}: ${(legacy.sessionIds as string[]).join(", ")} [Seeded]\n`,
+    );
+    return;
   }
   process.stdout.write(
     `${parsed.data.imported ? "Imported" : "Already imported"} ${parsed.data.version}: ${parsed.data.sessionIds.join(", ")} [Seeded]\n`,
@@ -913,6 +1110,7 @@ async function main(): Promise<void> {
   }
   try {
     args = await normalizeCredentialInputs(args);
+    await loadDefaultAnalysisCredential(args);
     if (args[0] === "search") {
       await search(args);
     } else if (args[0] === "compare") {

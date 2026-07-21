@@ -38,7 +38,14 @@ import {
   organizationMembers,
   sessionAnnotations,
   sourceEvents,
+  syntheticEvidenceRecords,
 } from "@workspace/database";
+
+import {
+  projectRichExampleDetail,
+  richExamplePackVersion,
+} from "./rich-example-pack.js";
+import { buildRichV1Corpus, richV1ExpectedCounts } from "./rich-v1-corpus.js";
 
 type ReconciliationInput = Reconciliation["inputs"][number];
 
@@ -311,6 +318,20 @@ function toExecutionSession(
   };
 }
 
+function timelineEvidenceId(
+  event: ExecutionSessionDetail["timeline"][number] | undefined,
+): string | null {
+  if (!event) return null;
+  if (event.sourceEventId) return event.sourceEventId;
+  if (event.reference?.origin === "captured_source_event") {
+    return event.reference.sourceEventId;
+  }
+  if (event.reference?.origin === "example_pack_server_controlled") {
+    return event.reference.syntheticEvidenceId;
+  }
+  return null;
+}
+
 function otelAttributes(payload: unknown): Record<string, string> | undefined {
   const record = asRecord(payload);
   const logRecord = asRecord(record?.log_record ?? record?.logRecord ?? record);
@@ -448,8 +469,59 @@ function identityHierarchyAssociates(
   return assertedIdentity;
 }
 
-function buildProjection(rows: SourceRow[]): SessionState[] {
+function buildProjection(rows: SourceRow[], organizationId: string): SessionState[] {
   const sessions = new Map<string, SessionState>();
+  const setupVerificationEventIds = new Set<string>();
+  const claimedStarts = new Set<string>();
+  const setupAcknowledgements = rows.filter((row) => {
+    const payload = asRecord(row.rawPayload);
+    const sessionId = stringField(payload, "session_id");
+    const explicitKind = stringField(payload, "canonical_kind");
+    const legacySetupIdentity = sessionId?.startsWith("setup-verification-");
+    return (
+      row.source === "codex_hook" &&
+      row.producerEvent === "Stop" &&
+      stringField(payload, "hook_event_name") === "Stop" &&
+      stringField(payload, "source") === "setup_verification_complete" &&
+      (explicitKind === "installation_health" || legacySetupIdentity === true) &&
+      stringField(payload, "turn_id") === undefined &&
+      stringField(payload, "agent_id") === undefined
+    );
+  });
+  for (const acknowledgement of setupAcknowledgements) {
+    setupVerificationEventIds.add(acknowledgement.id);
+    const acknowledgementPayload = asRecord(acknowledgement.rawPayload);
+    const sessionId = stringField(acknowledgementPayload, "session_id")!;
+    const matchingStart = rows
+      .filter((candidate) => {
+        if (
+          candidate.deliveringDeviceId !== acknowledgement.deliveringDeviceId ||
+          candidate.source !== "codex_hook" ||
+          candidate.producerEvent !== "SessionStart" ||
+          candidate.occurredAt > acknowledgement.occurredAt ||
+          claimedStarts.has(candidate.id)
+        ) {
+          return false;
+        }
+        const payload = asRecord(candidate.rawPayload);
+        return (
+          stringField(payload, "hook_event_name") === "SessionStart" &&
+          stringField(payload, "session_id") === sessionId &&
+          stringField(payload, "source") === "startup" &&
+          stringField(payload, "turn_id") === undefined &&
+          stringField(payload, "agent_id") === undefined
+        );
+      })
+      .sort(
+        (left, right) =>
+          right.occurredAt.getTime() - left.occurredAt.getTime() ||
+          right.receivedAt.getTime() - left.receivedAt.getTime(),
+      )[0];
+    if (matchingStart) {
+      claimedStarts.add(matchingStart.id);
+      setupVerificationEventIds.add(matchingStart.id);
+    }
+  }
   const ownership = new Map<
     string,
     { memberId: string; deviceId: string; sourceEventId: string }
@@ -457,6 +529,7 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
   for (const row of [...rows].sort((left, right) =>
     left.receivedAt.getTime() - right.receivedAt.getTime(),
   )) {
+    if (setupVerificationEventIds.has(row.id)) continue;
     const disposition = adaptCodexObservation(toCodexObservation(row));
     const sessionId = disposition.canonical[0]?.sessionId;
     if (sessionId && !ownership.has(sessionId)) {
@@ -474,6 +547,7 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
       left.receivedAt.getTime() - right.receivedAt.getTime(),
   );
   for (const row of chronological) {
+    if (setupVerificationEventIds.has(row.id)) continue;
     const disposition = adaptCodexObservation(toCodexObservation(row));
     if (
       disposition.status === "downgraded" ||
@@ -488,7 +562,12 @@ function buildProjection(rows: SourceRow[]): SessionState[] {
       let session = sessions.get(sessionId);
       if (!session) {
         session = {
-          databaseId: stableUuid("session", sessionId),
+          // Canonical producer identifiers are only public within an
+          // Organization.  Include the tenant in every projected storage
+          // identity so two Organizations can legitimately capture the same
+          // Session/Turn/agent keys without colliding on PostgreSQL primary
+          // keys or foreign-key references.
+          databaseId: stableUuid("session", organizationId, sessionId),
           canonicalId: sessionId,
           ownerMemberId: owner.memberId,
           ownerDeviceId: owner.deviceId,
@@ -784,6 +863,22 @@ export class ExecutionStore {
     await this.client.end();
   }
 
+  async reprojectAllOrganizations(): Promise<void> {
+    const devices = await this.database
+      .select({
+        id: enrolledDevices.id,
+        organizationId: enrolledDevices.organizationId,
+      })
+      .from(enrolledDevices)
+      .orderBy(asc(enrolledDevices.organizationId), asc(enrolledDevices.createdAt));
+    const projectedOrganizations = new Set<string>();
+    for (const device of devices) {
+      if (projectedOrganizations.has(device.organizationId)) continue;
+      projectedOrganizations.add(device.organizationId);
+      await this.projectForDevice(device.id);
+    }
+  }
+
   async projectForDevice(deviceId: string): Promise<string[]> {
     const [device] = await this.database
       .select({ organizationId: enrolledDevices.organizationId })
@@ -813,7 +908,7 @@ export class ExecutionStore {
         .from(sourceEvents)
         .where(eq(sourceEvents.organizationId, device.organizationId))
         .orderBy(asc(sourceEvents.receivedAt), asc(sourceEvents.id));
-      const sessions = buildProjection(rows);
+      const sessions = buildProjection(rows, device.organizationId);
       await transaction
         .delete(executionSessions)
         .where(
@@ -840,7 +935,7 @@ export class ExecutionStore {
         if (session.activities.length > 0) {
           await transaction.insert(activityEpisodes).values(
             session.activities.map((activity) => ({
-              id: stableUuid("activity", activity.sourceEventId),
+              id: stableUuid("activity", device.organizationId, activity.sourceEventId),
               sessionId: session.databaseId,
               publicId: activity.id,
               source: activity.source,
@@ -854,7 +949,7 @@ export class ExecutionStore {
         if (session.turns.size > 0) {
           await transaction.insert(executionTurns).values(
             [...session.turns.values()].map((turn) => ({
-              id: stableUuid("turn", session.canonicalId, turn.id),
+              id: stableUuid("turn", device.organizationId, session.canonicalId, turn.id),
               sessionId: session.databaseId,
               canonicalTurnId: turn.id,
               agentRunId: turn.agentRunId,
@@ -872,7 +967,7 @@ export class ExecutionStore {
           [...session.agents.values()].map((agent) => {
             const parent = agent.kind === "subagent" ? reconcileParent(agent) : null;
             return {
-              id: stableUuid("agent", session.canonicalId, agent.publicId),
+              id: stableUuid("agent", device.organizationId, session.canonicalId, agent.publicId),
               sessionId: session.databaseId,
               publicId: agent.publicId,
               kind: agent.kind,
@@ -899,7 +994,7 @@ export class ExecutionStore {
         if (session.timeline.length > 0) {
           await transaction.insert(executionTimelineEvents).values(
             session.timeline.map((event) => ({
-              id: stableUuid("timeline", event.sourceEventId),
+              id: stableUuid("timeline", device.organizationId, event.sourceEventId),
               sessionId: session.databaseId,
               sourceEventId: event.sourceEventId,
               event: event.event,
@@ -1008,10 +1103,59 @@ export class ExecutionStore {
         and evidence_event.raw_payload ->> 'session_id' = ${executionSessions.canonicalSessionId}
         and evidence_event.raw_payload::text ilike ${`%${value}%`}
     )`;
-    if (query.model) conditions.push(capturedEvidence(query.model));
-    if (query.tool) conditions.push(capturedEvidence(query.tool));
-    if (query.capability) conditions.push(capturedEvidence(query.capability));
-    if (query.error) conditions.push(capturedEvidence(query.error));
+    const syntheticModelEvidence = (value: string) => sql<boolean>`exists (
+      select 1 from synthetic_evidence_records example_evidence
+      where example_evidence.organization_id = ${organizationId}
+        and example_evidence.session_id = ${executionSessions.id}
+        and (
+          example_evidence.payload ->> 'model' = ${value}
+          or example_evidence.payload -> 'modelMapping' ->> 'observedModel' = ${value}
+        )
+    )`;
+    const syntheticToolEvidence = (value: string) => sql<boolean>`exists (
+      select 1 from synthetic_evidence_records example_evidence
+      where example_evidence.organization_id = ${organizationId}
+        and example_evidence.session_id = ${executionSessions.id}
+        and example_evidence.record_kind = 'tool'
+        and example_evidence.payload ->> 'toolName' = ${value}
+    )`;
+    const syntheticCapabilityEvidence = (value: string) => sql<boolean>`exists (
+      select 1 from synthetic_evidence_records example_evidence
+      where example_evidence.organization_id = ${organizationId}
+        and example_evidence.session_id = ${executionSessions.id}
+        and example_evidence.record_kind = 'capability'
+        and example_evidence.payload ->> 'capability' = ${value}
+    )`;
+    const syntheticErrorEvidence = (value: string) => sql<boolean>`exists (
+      select 1 from synthetic_evidence_records example_evidence
+      where example_evidence.organization_id = ${organizationId}
+        and example_evidence.session_id = ${executionSessions.id}
+        and example_evidence.record_kind = 'api_request'
+        and example_evidence.payload ->> 'error' ilike ${`%${value}%`}
+    )`;
+    if (query.model) {
+      conditions.push(
+        or(capturedEvidence(query.model), syntheticModelEvidence(query.model))!,
+      );
+    }
+    if (query.tool) {
+      conditions.push(
+        or(capturedEvidence(query.tool), syntheticToolEvidence(query.tool))!,
+      );
+    }
+    if (query.capability) {
+      conditions.push(
+        or(
+          capturedEvidence(query.capability),
+          syntheticCapabilityEvidence(query.capability),
+        )!,
+      );
+    }
+    if (query.error) {
+      conditions.push(
+        or(capturedEvidence(query.error), syntheticErrorEvidence(query.error))!,
+      );
+    }
     if (query.q) {
       conditions.push(sql<boolean>`to_tsvector('english', concat_ws(' ',
         ${executionSessions.canonicalSessionId},
@@ -1160,25 +1304,26 @@ export class ExecutionStore {
       turn: Turn,
     ) => {
       const activity = detail.timeline.find((event) => event.turnId === turn.id);
-      if (!activity) {
+      const activityId = timelineEvidenceId(activity);
+      if (!activity || !activityId) {
         evidenceGaps.add(
-          `No captured timeline activity resolves the Turn ${turn.id} citation.`,
+          `No timeline activity resolves the Turn ${turn.id} citation.`,
         );
         return;
       }
       const sessionId = detail.session.id;
       const encodedSessionId = encodeURIComponent(sessionId);
       const encodedTurnId = encodeURIComponent(turn.id);
-      const encodedActivityId = encodeURIComponent(activity.sourceEventId);
+      const encodedActivityId = encodeURIComponent(activityId);
       const id = `citation_${createHash("sha256")
-        .update(`${organizationId}\n${sessionId}\n${turn.id}\n${activity.sourceEventId}`)
+        .update(`${organizationId}\n${sessionId}\n${turn.id}\n${activityId}`)
         .digest("hex")
         .slice(0, 24)}`;
       citationsById.set(id, {
         id,
         sessionId,
         turnId: turn.id,
-        activityId: activity.sourceEventId,
+        activityId,
         synthetic: detail.session.synthetic.kind,
         evidence: activity.evidence,
         links: {
@@ -1335,7 +1480,7 @@ export class ExecutionStore {
     > {
     const detail = await this.getSession(organizationId, canonicalSessionId);
     const activity = detail?.timeline.find(
-      (candidate) => candidate.sourceEventId === activityId,
+      (candidate) => timelineEvidenceId(candidate) === activityId,
     );
     return detail && activity
       ? { sessionId: detail.session.id, turnId: activity.turnId, activity }
@@ -1408,7 +1553,7 @@ export class ExecutionStore {
   async importExamplePack(
     organizationId: string,
     importedByMemberId: string,
-    version: "starter-v1",
+    version: "starter-v1" | "rich-v1",
   ): Promise<ExamplePackImportResponse> {
     return this.database.transaction(async (transaction) => {
       const [existingImport] = await transaction
@@ -1432,6 +1577,188 @@ export class ExecutionStore {
           ),
         )
         .limit(1);
+      if (version === richExamplePackVersion) {
+        const corpus = buildRichV1Corpus(organizationId);
+        const response = (imported: boolean) => ({
+          version,
+          imported,
+          exampleMemberId: corpus.members[0]!.id,
+          sessionIds: corpus.sessions.map((session) => session.canonicalId),
+          counts: corpus.counts,
+          syntheticDesignation: "seeded" as const,
+        });
+        if (existingImport) {
+          const [[memberCount], [sessionCount], [turnCount], [agentRunCount], [detailRecordCount]] =
+            await Promise.all([
+              transaction
+                .select({ value: sql<number>`count(*)::int` })
+                .from(organizationMembers)
+                .where(
+                  and(
+                    eq(organizationMembers.organizationId, organizationId),
+                    eq(organizationMembers.isExample, true),
+                    eq(organizationMembers.examplePackVersion, version),
+                  ),
+                ),
+              transaction
+                .select({ value: sql<number>`count(*)::int` })
+                .from(executionSessions)
+                .where(
+                  and(
+                    eq(executionSessions.organizationId, organizationId),
+                    eq(executionSessions.isSeeded, true),
+                    eq(executionSessions.examplePackVersion, version),
+                  ),
+                ),
+              transaction
+                .select({ value: sql<number>`count(*)::int` })
+                .from(executionTurns)
+                .innerJoin(executionSessions, eq(executionTurns.sessionId, executionSessions.id))
+                .where(
+                  and(
+                    eq(executionSessions.organizationId, organizationId),
+                    eq(executionSessions.examplePackVersion, version),
+                  ),
+                ),
+              transaction
+                .select({ value: sql<number>`count(*)::int` })
+                .from(executionAgentRuns)
+                .innerJoin(executionSessions, eq(executionAgentRuns.sessionId, executionSessions.id))
+                .where(
+                  and(
+                    eq(executionSessions.organizationId, organizationId),
+                    eq(executionSessions.examplePackVersion, version),
+                  ),
+                ),
+              transaction
+                .select({ value: sql<number>`count(*)::int` })
+                .from(syntheticEvidenceRecords)
+                .where(
+                  and(
+                    eq(syntheticEvidenceRecords.organizationId, organizationId),
+                    eq(syntheticEvidenceRecords.packVersion, version),
+                  ),
+                ),
+            ]);
+          const actualCounts = {
+            members: memberCount?.value ?? 0,
+            sessions: sessionCount?.value ?? 0,
+            turns: turnCount?.value ?? 0,
+            agentRuns: agentRunCount?.value ?? 0,
+            detailRecords: detailRecordCount?.value ?? 0,
+          };
+          if (
+            Object.entries(richV1ExpectedCounts).some(
+              ([name, expected]) =>
+                actualCounts[name as keyof typeof actualCounts] !== expected,
+            )
+          ) {
+            throw new Error(
+              `RICH_V1_IMPORT_INTEGRITY_MISMATCH:${JSON.stringify(actualCounts)}`,
+            );
+          }
+          return response(false);
+        }
+        await transaction.insert(organizationMembers).values(
+          corpus.members.map((member) => ({
+            id: member.id,
+            organizationId,
+            displayName: member.displayName,
+            role: "member" as const,
+            isExample: true,
+            examplePackVersion: version,
+            createdAt: member.createdAt,
+          })),
+        );
+        await transaction.insert(executionSessions).values(
+          corpus.sessions.map((session) => ({
+            id: session.databaseId,
+            organizationId,
+            canonicalSessionId: session.canonicalId,
+            ownerMemberId: session.ownerMemberId,
+            ownerDeviceId: null,
+            gitContext: session.gitContext,
+            firstObservedAt: session.firstObservedAt,
+            lastObservedAt: session.lastObservedAt,
+            activityState: session.activityState,
+            rootAgentRunId: session.rootAgentRunId,
+            projectionVersion: "example-rich-v1-2",
+            ownershipReconciliation: {
+              inputs: [],
+              rule: "example_pack_server_controlled",
+              selectedValue: session.ownerMemberId,
+              confidence: "high",
+            },
+            isSeeded: true,
+            examplePackVersion: version,
+            searchText: session.searchText,
+          })),
+        );
+        await transaction.insert(sessionAnnotations).values(
+          corpus.sessions.map((session) => ({
+            id: session.annotation.id,
+            organizationId,
+            canonicalSessionId: session.canonicalId,
+            outcome: session.annotation.outcome,
+            reviewStatus: session.annotation.reviewStatus,
+            tags: session.annotation.tags,
+            updatedByMemberId: importedByMemberId,
+            updatedAt: session.annotation.updatedAt,
+          })),
+        );
+        await transaction.insert(executionTurns).values(
+          corpus.sessions.flatMap((session) =>
+            session.turns.map((turn) => ({
+              id: turn.id,
+              sessionId: session.databaseId,
+              canonicalTurnId: turn.canonicalTurnId,
+              agentRunId: turn.agentRunId,
+              firstObservedAt: turn.firstObservedAt,
+              lastObservedAt: turn.lastObservedAt,
+              evidence: turn.evidence,
+            })),
+          ),
+        );
+        await transaction.insert(executionAgentRuns).values(
+          corpus.sessions.flatMap((session) =>
+            session.agentRuns.map((agent) => ({
+              id: agent.id,
+              sessionId: session.databaseId,
+              publicId: agent.publicId,
+              kind: agent.kind,
+              codexThreadId: agent.codexThreadId,
+              agentType: agent.agentType,
+              firstObservedAt: agent.firstObservedAt,
+              lastObservedAt: agent.lastObservedAt,
+              identityEvidence: agent.identityEvidence,
+              parentStatus: agent.parentStatus,
+              parentAgentRunId: agent.parentAgentRunId,
+              parentReconciliation: agent.parentReconciliation,
+            })),
+          ),
+        );
+        const detailRecords = corpus.sessions.flatMap((session) => session.records);
+        for (let offset = 0; offset < detailRecords.length; offset += 100) {
+          await transaction.insert(syntheticEvidenceRecords).values(
+            detailRecords.slice(offset, offset + 100).map((record) => ({
+              id: record.id,
+              organizationId: record.organizationId,
+              sessionId: record.sessionId,
+              packVersion: record.packVersion,
+              recordKind: record.recordKind,
+              ordinal: record.ordinal,
+              payload: record.payload,
+            })),
+          );
+        }
+        await transaction.insert(examplePackImports).values({
+          organizationId,
+          version,
+          importedByMemberId,
+          importedAt: new Date("2026-06-08T09:00:00.000Z"),
+        });
+        return response(true);
+      }
       let exampleMemberId = existingMember?.id;
       if (!exampleMemberId) {
         const [member] = await transaction
@@ -1526,6 +1853,13 @@ export class ExecutionStore {
         imported: !existingImport,
         exampleMemberId,
         sessionIds,
+        counts: {
+          members: 1,
+          sessions: 1,
+          turns: 1,
+          agentRuns: 0,
+          detailRecords: 0,
+        },
         syntheticDesignation: "seeded",
       };
     });
@@ -1571,7 +1905,8 @@ export class ExecutionStore {
       .limit(1);
     if (!selected) return undefined;
     const row = selected.session;
-    const [activities, turns, agents, timeline, retainedEvidence] = await Promise.all([
+    const [activities, turns, agents, timeline, retainedEvidence, syntheticRecords] =
+      await Promise.all([
       this.database
         .select()
         .from(activityEpisodes)
@@ -1607,6 +1942,23 @@ export class ExecutionStore {
         .from(sourceEvents)
         .where(eq(sourceEvents.organizationId, organizationId))
         .orderBy(asc(sourceEvents.occurredAt)),
+      this.database
+        .select({
+          recordKind: syntheticEvidenceRecords.recordKind,
+          ordinal: syntheticEvidenceRecords.ordinal,
+          payload: syntheticEvidenceRecords.payload,
+        })
+        .from(syntheticEvidenceRecords)
+        .where(
+          and(
+            eq(syntheticEvidenceRecords.organizationId, organizationId),
+            eq(syntheticEvidenceRecords.sessionId, row.id),
+          ),
+        )
+        .orderBy(
+          asc(syntheticEvidenceRecords.recordKind),
+          asc(syntheticEvidenceRecords.ordinal),
+        ),
     ]);
     const sessionIdentity: ExecutionIdentityHierarchy = {
       sessions: new Set([row.canonicalSessionId]),
@@ -1648,20 +2000,26 @@ export class ExecutionStore {
       })),
       priceTable: this.priceTable,
     });
+    const syntheticDetail =
+      row.isSeeded && row.examplePackVersion === richExamplePackVersion
+        ? projectRichExampleDetail(syntheticRecords)
+        : undefined;
     return {
       session: toExecutionSession(
         row,
         { displayName: selected.ownerDisplayName, isExample: selected.ownerIsExample },
         selected.annotation,
       ),
-      activities: activities.map((activity) => ({
-        id: activity.publicId,
-        source: activity.source as ActivityEpisode["source"],
-        state: activity.state as ActivityEpisode["state"],
-        startedAt: activity.startedAt.toISOString(),
-        endedAt: activity.endedAt?.toISOString() ?? null,
-        sourceEventId: activity.sourceEventId,
-      })),
+      activities:
+        syntheticDetail?.activities ??
+        activities.map((activity) => ({
+          id: activity.publicId,
+          source: activity.source as ActivityEpisode["source"],
+          state: activity.state as ActivityEpisode["state"],
+          startedAt: activity.startedAt.toISOString(),
+          endedAt: activity.endedAt?.toISOString() ?? null,
+          sourceEventId: activity.sourceEventId,
+        })),
       turns: turns.map((turn) => ({
         id: turn.canonicalTurnId,
         agentRunId: turn.agentRunId,
@@ -1689,15 +2047,18 @@ export class ExecutionStore {
               }
             : null,
       })),
-      timeline: timeline.map((event) => ({
-        sourceEventId: event.sourceEventId,
-        event: event.event,
-        occurredAt: event.occurredAt.toISOString(),
-        turnId: event.turnId,
-        agentRunId: event.agentRunId,
-        evidence: event.evidence as ExecutionSessionDetail["timeline"][number]["evidence"],
-      })),
-      evidence: richEvidence,
+      timeline:
+        syntheticDetail?.timeline ??
+        timeline.map((event) => ({
+          sourceEventId: event.sourceEventId,
+          event: event.event,
+          occurredAt: event.occurredAt.toISOString(),
+          turnId: event.turnId,
+          agentRunId: event.agentRunId,
+          evidence:
+            event.evidence as ExecutionSessionDetail["timeline"][number]["evidence"],
+        })),
+      evidence: syntheticDetail?.evidence ?? richEvidence,
     };
   }
 }

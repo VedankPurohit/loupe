@@ -93,12 +93,16 @@ _Avoid_: Feature support, completeness
 ## Organization
 
 **Organization**:
-The authenticated collaboration and visibility boundary whose members can inspect captured sessions by default.
-_Avoid_: Public, tenant, workspace
+An authenticated collaboration and visibility boundary whose members can inspect its captured sessions by default. One Loupe deployment may host multiple Organizations without sharing evidence or authority between them.
+_Avoid_: Deployment, public, tenant, workspace
+
+**Person**:
+A stable authenticated human identity that may hold membership in multiple Organizations.
+_Avoid_: Member, Device, browser session, account
 
 **Organization member**:
-An authenticated person belonging to the organization who may use its browser and CLI surfaces and own captured sessions. Every organization member is either a Member or an Administrator.
-_Avoid_: Device, session owner, account
+A Person's membership in one Organization, through which they may use its browser and CLI surfaces and own captured sessions. Each Organization member is either a Member or an Administrator, independently of that Person's role in any other Organization.
+_Avoid_: Person, Device, session owner, account
 
 **Member**:
 An organization member with ordinary access to organization-visible content and no authority to approve or publish Organization standards.

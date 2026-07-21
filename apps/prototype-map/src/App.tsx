@@ -130,14 +130,22 @@ type MapNode = {
 function buildMapNodes(detail: ExecutionSessionDetail): MapNode[] {
   const turnAgent = new Map(detail.turns.map((turn) => [turn.id, turn.agentRunId]));
   return [
-    ...detail.timeline.map((event) => ({
-      id: event.sourceEventId,
-      kind: "activity" as const,
-      label: event.event,
-      occurredAt: event.occurredAt,
-      agentRunId: event.agentRunId ?? detail.session.rootAgentRunId,
-      evidence: event.evidence,
-    })),
+    // Synthetic timeline entries carry no backing source event, so they have no
+    // stable identity to select or key by on the map; only project targetable ones.
+    ...detail.timeline.flatMap((event) =>
+      event.sourceEventId === null
+        ? []
+        : [
+            {
+              id: event.sourceEventId,
+              kind: "activity" as const,
+              label: event.event,
+              occurredAt: event.occurredAt,
+              agentRunId: event.agentRunId ?? detail.session.rootAgentRunId,
+              evidence: event.evidence,
+            },
+          ],
+    ),
     ...detail.evidence.tools.map((tool) => ({
       id: tool.id,
       kind: "tool" as const,

@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
 
-import { loadInspectorFixture } from "./session-fixture.js";
+import {
+  loadInspectorFixture,
+  setupVerificationFixture,
+} from "./session-fixture.js";
 
 test("an operator can retry when Bootstrap redemption cannot reach the server", async ({
   page,
@@ -67,7 +70,9 @@ test("an operator redeems Bootstrap and inspects a live resumable Session", asyn
 
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Ada's MacBook Pro" }),
+    page
+      .getByRole("region", { name: "Enrolled devices" })
+      .getByRole("heading", { name: "Ada's MacBook Pro" }),
   ).toBeVisible();
   await expect(page.getByText("Healthy", { exact: true })).toBeVisible();
   await expect(page.getByText("Policy version 1", { exact: true })).toBeVisible();
@@ -87,13 +92,33 @@ test("an operator redeems Bootstrap and inspects a live resumable Session", asyn
     });
 
   expect((await deliver(fixture.initial)).status()).toBe(200);
+  expect((await deliver(setupVerificationFixture())).status()).toBe(200);
   await page.reload();
 
   await expect(
-    page.getByRole("heading", { name: "Activity field" }),
+    page.getByRole("region", { name: "Device diagnostics" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Execution topology" }),
+    page.getByRole("region", { name: "Device diagnostics" }).getByText(
+      "Installation health",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Device diagnostics" }).getByText(
+      "Delivery acknowledged",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Device diagnostics" }).getByRole(
+      "heading",
+      { name: "Missing prerequisites" },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Organization activity" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Session ledger" }),
   ).toBeVisible();
   await expect(page.getByText("session-probe-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Root agent run", { exact: true }).first()).toBeVisible();

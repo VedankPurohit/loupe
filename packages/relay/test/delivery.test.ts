@@ -37,6 +37,96 @@ describe("relay delivery queue", () => {
     await Promise.all(paths.splice(0).map((path) => rm(path, { force: true })));
   });
 
+  it("exposes a content-free L0 structural status before network delivery", () => {
+    const databasePath = join(tmpdir(), `delivery-${randomUUID()}.sqlite`);
+    paths.push(databasePath);
+    const sourceEvent = event();
+    sourceEvent.rawPayload = {
+      ...sourceEvent.rawPayload,
+      prompt: "PRIVATE_RELAY_CAPTURE_MUST_NOT_ESCAPE",
+    };
+    sourceEvent.payloadHash = `sha256:${createHash("sha256")
+      .update(JSON.stringify(sourceEvent.rawPayload))
+      .digest("hex")}`;
+    const queue = openDeliveryQueue({ databasePath });
+    queue.record(sourceEvent);
+
+    const status = queue.structuralStatus({ sessionId: "session-1" });
+    expect(status).toEqual({
+      observations: [
+        {
+          sourceEventId: sourceEvent.id,
+          sourceFamily: "codex_hook",
+          producerVersion: "0.144.5",
+          eventName: "SessionStart",
+          sourceIdentity: sourceEvent.deduplicationKey,
+          payloadHash: sourceEvent.payloadHash,
+          occurredAt: "2026-07-17T10:00:00.000Z",
+          capturedAt: "2026-07-17T10:00:00.010Z",
+          adapterDisposition: "adapted",
+          fieldPresence: {
+            sessionIdentity: true,
+            turnIdentity: false,
+            traceIdentity: false,
+            gitContext: false,
+            canonicalObservations: false,
+          },
+          queue: {
+            state: "pending",
+            attempts: 0,
+            nextAttemptAt: null,
+            lastError: null,
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(status)).not.toContain("PRIVATE_RELAY_CAPTURE");
+    expect(JSON.stringify(status)).not.toContain("rawPayload");
+    queue.close();
+  });
+
+  it("scopes nested OTel span structure without returning span content", () => {
+    const databasePath = join(tmpdir(), `delivery-${randomUUID()}.sqlite`);
+    paths.push(databasePath);
+    const sourceEvent = event();
+    sourceEvent.source = "codex_otel_trace";
+    sourceEvent.producer.event = "turn";
+    sourceEvent.rawPayload = {
+      span: {
+        traceId: "0123456789abcdef0123456789abcdef",
+        attributes: [
+          { key: "thread.id", value: { stringValue: "session-trace" } },
+          { key: "turn.id", value: { stringValue: "turn-trace" } },
+        ],
+        privateEvent: "PRIVATE_SPAN_CONTENT_MUST_NOT_ESCAPE",
+      },
+    };
+    sourceEvent.payloadHash = `sha256:${createHash("sha256")
+      .update(JSON.stringify(sourceEvent.rawPayload))
+      .digest("hex")}`;
+    const queue = openDeliveryQueue({ databasePath });
+    queue.record(sourceEvent);
+
+    const status = queue.structuralStatus({ sessionId: "session-trace" });
+    expect(status).toMatchObject({
+      observations: [
+        {
+          sourceEventId: sourceEvent.id,
+          sourceFamily: "codex_otel_trace",
+          eventName: "turn",
+          fieldPresence: {
+            sessionIdentity: true,
+            turnIdentity: true,
+            traceIdentity: true,
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(status)).not.toContain("PRIVATE_SPAN_CONTENT");
+    expect(JSON.stringify(status)).not.toContain("span");
+    queue.close();
+  });
+
   it("records before network and retries unacknowledged evidence after restart", async () => {
     const databasePath = join(tmpdir(), `delivery-${randomUUID()}.sqlite`);
     paths.push(databasePath);
@@ -77,6 +167,14 @@ describe("relay delivery queue", () => {
     });
     expect(recovered).toEqual({ sent: 1, acknowledged: 1, retrying: 0, poisoned: 0 });
     expect(queue.pending()).toEqual([]);
+    expect(queue.structuralStatus()).toMatchObject({
+      observations: [
+        {
+          sourceEventId: sourceEvent.id,
+          queue: { state: "acknowledged", attempts: 2, lastError: null },
+        },
+      ],
+    });
     queue.close();
   });
 

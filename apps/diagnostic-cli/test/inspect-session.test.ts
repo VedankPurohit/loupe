@@ -183,9 +183,40 @@ describe("spawned diagnostic CLI", () => {
           timeline: [],
           evidence: {
             apiRequests: [],
-            tools: [],
+            tools: [
+              {
+                id: "tool-probe-001",
+                toolName: "shell",
+                occurredAt: "2026-07-17T08:00:15.000Z",
+                identifiers: { hookToolUseId: "hook-tool-001", otelCallId: null },
+                input: null,
+                result: null,
+                durationMs: null,
+                outcome: "unknown",
+                approval: "unavailable",
+                retryCount: null,
+                turnAssociation: { turnId: "turn-probe-001", strength: "inferred", method: "test" },
+                evidence: {
+                  stability: ["observed", "unstable"],
+                  derivation: "inferred",
+                  sourceEventIds: ["55555555-5555-4555-8555-555555555555"],
+                },
+                coverageGaps: ["result_not_captured"],
+              },
+            ],
             lifecycle: [],
-            tokenUsage: [],
+            tokenUsage: [
+              {
+                id: "usage-probe-001",
+                occurredAt: "2026-07-17T08:00:20.000Z",
+                sourceKind: "provider_completion",
+                model: null,
+                serviceTier: null,
+                categories: { input: null, cachedInput: null, output: null, reasoningOutput: null, total: null },
+                turnAssociation: { turnId: "turn-probe-001", strength: "unavailable", method: "test" },
+                evidence: { stability: ["unavailable"], derivation: "unavailable", sourceEventIds: [] },
+              },
+            ],
             context: {
               limits: [],
               occupancy: [],
@@ -235,6 +266,12 @@ describe("spawned diagnostic CLI", () => {
     );
     expect(result.stdout).toContain("Parent: unresolved");
     expect(result.stdout).toContain("no defensible parent observation; confidence none");
+    expect(result.stdout).toContain("Tools (1)");
+    expect(result.stdout).toContain("tool-probe-001: shell; outcome unknown; approval unavailable");
+    expect(result.stdout).toContain("Model evidence (1 Token samples)");
+    expect(result.stdout).toContain("logical model unavailable");
+    expect(result.stdout).toContain("Transport caveat: API attempts are not stable logical model requests.");
+    expect(result.stdout).toContain("Context: occupancy unavailable; contribution unavailable");
   });
 
   it("compares selected Turns through /api/v1 and prints the evidence classification and citations", async () => {

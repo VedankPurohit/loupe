@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
 import { readFile, stat } from "node:fs/promises";
 
 import {
-  DeviceEnrollmentGrantResponseSchema,
   DeviceEnrollmentResponseSchema,
   ExecutionSessionDetailResponseSchema,
   browserSessionCookieName,
 } from "@workspace/contracts";
 
 import { openDeliveryQueue } from "./index.js";
+import { authorizeDeviceDisconnect, authorizeDeviceEnrollment } from "./browser-authorization.js";
 import { LaunchdServiceManager } from "./launchd.js";
 import {
   deliverPendingOnce,
@@ -23,12 +23,13 @@ import {
 import {
   applyMacosSetup,
   disconnectMacosSetup,
+  ensureMacosSetupHealthy,
+  installRelayRuntime,
+  inspectCodexHookTrust,
   previewMacosSetup,
   readSetupState,
   requireSecureServerUrl,
-  revokeMacosSetupCredential,
   uninstallMacosSetup,
-  verifyCodexHookTrust,
 } from "./setup.js";
 
 const defaultStateDir = join(
@@ -39,14 +40,18 @@ const defaultStateDir = join(
 );
 
 const usage = `Usage:
-  coding-agent-relay setup [--server-url URL] [--browser-session-file PATH|-] [--device-name NAME] [--codex-home PATH] [--state-dir PATH] [--yes]
-  coding-agent-relay disconnect [--browser-session-file PATH|-] [--state-dir PATH]
-  coding-agent-relay uninstall [--browser-session-file PATH|-] [--state-dir PATH]
+  coding-agent-relay setup [--server-url URL] [--device-name NAME] [--codex-home PATH] [--state-dir PATH] [--yes]
+  coding-agent-relay disconnect [--state-dir PATH]
+  coding-agent-relay uninstall [--state-dir PATH]
   coding-agent-relay status [--state-dir PATH]
   coding-agent-relay checkpoint [--browser-session-file PATH|-] --session-id ID [--web-url URL] [--state-dir PATH]
 
-Credential input:
-  CODING_AGENT_OBSERVABILITY_BROWSER_SESSION  Browser Session value for automation
+Setup authorization:
+  setup/disconnect/uninstall open a browser authorization page and receive a
+  short-lived loopback hand-off. No browser cookies are read by this command.
+
+Checkpoint credential input:
+  CODING_AGENT_OBSERVABILITY_BROWSER_SESSION  Browser Session for diagnostics only
   --browser-session-file PATH                 Read it from a 0600 file (or stdin with -)
 
 Internal service commands:
@@ -121,29 +126,51 @@ function value(options: Map<string, string | true>, name: string, fallback?: str
   return found;
 }
 
-async function enroll(options: {
+async function redeemEnrollmentGrant(options: {
   serverUrl: string;
-  browserSession: string;
-  deviceName: string;
+  grant: string;
 }): Promise<{ credential: string; deviceId: string }> {
-  const grantResponse = await fetch(`${options.serverUrl}/api/v1/device-enrollment-grants`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      cookie: `${browserSessionCookieName}=${options.browserSession}`,
-    },
-    body: JSON.stringify({ deviceName: options.deviceName }),
-  });
-  if (!grantResponse.ok) throw new Error(`ENROLLMENT_GRANT_HTTP_${grantResponse.status}`);
-  const grant = DeviceEnrollmentGrantResponseSchema.parse(await grantResponse.json());
   const redeemResponse = await fetch(`${options.serverUrl}/api/v1/device-enrollments/redeem`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ grant: grant.grant }),
+    body: JSON.stringify({ grant: options.grant }),
   });
   if (!redeemResponse.ok) throw new Error(`ENROLLMENT_REDEEM_HTTP_${redeemResponse.status}`);
   const enrollment = DeviceEnrollmentResponseSchema.parse(await redeemResponse.json());
   return { credential: enrollment.credential, deviceId: enrollment.device.id };
+}
+
+async function revokeEnrollmentAfterFailedSetup(options: {
+  serverUrl: string;
+  credential: string;
+}): Promise<void> {
+  const response = await fetch(`${options.serverUrl}/api/v1/device-connection/revoke`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${options.credential}` },
+  });
+  if (response.status !== 204) {
+    throw new Error(`DEVICE_ROLLBACK_HTTP_${response.status}`);
+  }
+}
+
+async function verifySetupDelivery(options: {
+  stateDir: string;
+  hookTrust: "trusted" | "managed";
+}): Promise<boolean> {
+  const eventIds = await recordSetupVerification({
+    stateDir: options.stateDir,
+    hookTrust: options.hookTrust,
+    relayState: "running",
+  });
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await deliverPendingOnce({ stateDir: options.stateDir }).catch(() => undefined);
+    const queue = openDeliveryQueue({ databasePath: join(options.stateDir, "relay.sqlite") });
+    const pending = queue.pending().some(({ event }) => eventIds.includes(event.id));
+    queue.close();
+    if (!pending) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
 }
 
 async function setup(args: string[]): Promise<void> {
@@ -159,12 +186,32 @@ async function setup(args: string[]): Promise<void> {
         `SETUP_ALREADY_INSTALLED: disconnect and uninstall before changing server URL from ${installed.serverUrl}.`,
       );
     }
-    const manager = new LaunchdServiceManager({ homeDir: homedir() });
-    if ((await manager.status()) !== "running" && installed.credential) {
-      await manager.install(installed.service);
-      await manager.start();
-    }
-    process.stdout.write("Setup already applied; configuration was left unchanged.\n");
+    let observedHookTrust: "trusted" | "managed" | undefined;
+    const result = await ensureMacosSetupHealthy({
+      stateDir,
+      serviceManager: new LaunchdServiceManager({ homeDir: homedir() }),
+      verifyHookTrust: async (state) => {
+        observedHookTrust = await inspectCodexHookTrust({
+          codexHome: state.codexHome,
+          cwd: process.cwd(),
+          expectedSourcePath: join(state.codexHome, "hooks.json"),
+          expectedCommand: state.hookCommand!,
+        });
+        return observedHookTrust !== undefined;
+      },
+      verifyDelivery: (state) =>
+        observedHookTrust
+          ? verifySetupDelivery({ stateDir: state.stateDir, hookTrust: observedHookTrust })
+          : Promise.resolve(false),
+    });
+    process.stdout.write(
+      result === "restarted"
+        ? "Setup already applied; exact hook trust, delivery, and Device diagnostics were verified and the relay was restarted.\n"
+        : "Setup already applied; configuration, exact hook trust, delivery, and Device diagnostics were verified.\n",
+    );
+    process.stdout.write(
+      `Device diagnostics: ${installed.serverUrl}/api/v1/devices/${encodeURIComponent(installed.deviceId)}/diagnostics\nNext: coding-agent-relay status --state-dir ${JSON.stringify(stateDir)}\n`,
+    );
     return;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -174,7 +221,7 @@ async function setup(args: string[]): Promise<void> {
     stateDir,
     serverUrl,
     nodePath: process.execPath,
-    relayCliPath: fileURLToPath(import.meta.url),
+    relayCliPath: join(stateDir, "runtime", "coding-agent-relay.js"),
   });
   process.stdout.write("Capture setup preview (no changes applied):\n");
   for (const disclosure of preview.disclosures) process.stdout.write(`- ${disclosure}\n`);
@@ -183,48 +230,64 @@ async function setup(args: string[]): Promise<void> {
     process.stdout.write("\nReview the preview, then rerun with --yes to consent and apply.\n");
     return;
   }
-  const browserSessionValue = await browserSession(options);
-  const enrollment = await enroll({
+  const authorization = await authorizeDeviceEnrollment({
     serverUrl,
-    browserSession: browserSessionValue,
     deviceName: value(options, "--device-name", `Mac ${homedir().split("/").at(-1) ?? "device"}`),
   });
+  const enrollment = await redeemEnrollmentGrant({ serverUrl, grant: authorization.grant });
   const manager = new LaunchdServiceManager({ homeDir: homedir() });
+  let observedHookTrust: "trusted" | "managed" | undefined;
   await applyMacosSetup({
     preview,
     enrollment,
     serviceManager: manager,
-    verifyHookTrust: () =>
-      verifyCodexHookTrust({
+    verifyHookTrust: async () => {
+      observedHookTrust = await inspectCodexHookTrust({
         codexHome: preview.codexHome,
         cwd: process.cwd(),
         expectedSourcePath: join(preview.codexHome, "hooks.json"),
         expectedCommand: preview.hookCommand,
-      }),
-    verifyDelivery: async () => {
-      const eventIds = await recordSetupVerification({ stateDir });
-      for (let attempt = 0; attempt < 12; attempt += 1) {
-        await deliverPendingOnce({ stateDir }).catch(() => undefined);
-        const queue = openDeliveryQueue({ databasePath: join(stateDir, "relay.sqlite") });
-        const pending = queue.pending().some(({ event }) => eventIds.includes(event.id));
-        queue.close();
-        if (!pending) return true;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      return false;
+      });
+      return observedHookTrust !== undefined;
     },
+    verifyDelivery: async () => {
+      if (!observedHookTrust) {
+        throw new Error(
+          "SETUP_HOOK_TRUST_REQUIRED: verify hook trust before recording installation health.",
+        );
+      }
+      return verifySetupDelivery({ stateDir, hookTrust: observedHookTrust });
+    },
+    rollbackEnrollment: () =>
+      revokeEnrollmentAfterFailedSetup({
+        serverUrl,
+        credential: enrollment.credential,
+      }),
+    installRuntime: () =>
+      installRelayRuntime({
+        sourcePath: fileURLToPath(import.meta.url),
+        installedPath: preview.relayCliPath,
+      }),
   });
-  process.stdout.write("Setup complete: relay installed, started, and test delivery acknowledged.\n");
+  process.stdout.write(
+    `Setup complete: relay installed, exact hook trust verified, and test delivery acknowledged.\nDevice diagnostics: ${serverUrl}/api/v1/devices/${encodeURIComponent(enrollment.deviceId)}/diagnostics\nNext: coding-agent-relay status --state-dir ${JSON.stringify(stateDir)}\n`,
+  );
 }
 
 async function disconnect(args: string[]): Promise<void> {
   const options = flags(args);
+  const stateDir = value(options, "--state-dir", defaultStateDir);
+  const state = await readSetupState(stateDir);
   await disconnectMacosSetup({
-    stateDir: value(options, "--state-dir", defaultStateDir),
-    browserSession: await browserSession(options),
+    stateDir,
+    browserAuthorization: () => authorizeDeviceDisconnect({
+      serverUrl: state.serverUrl,
+      deviceId: state.deviceId,
+    }).then(() => undefined),
     serviceManager: new LaunchdServiceManager({ homeDir: homedir() }),
   });
   process.stdout.write("Disconnected: delivery credential revoked; accepted server history was preserved.\n");
+  process.stdout.write("Next: run coding-agent-relay uninstall to restore managed Codex configuration, or setup after uninstall to enroll again.\n");
 }
 
 async function uninstall(args: string[]): Promise<void> {
@@ -232,16 +295,15 @@ async function uninstall(args: string[]): Promise<void> {
   const stateDir = value(options, "--state-dir", defaultStateDir);
   const manager = new LaunchdServiceManager({ homeDir: homedir() });
   const state = await readSetupState(stateDir);
-  const browserSessionValue = state.credential ? await browserSession(options) : undefined;
   await uninstallMacosSetup({
     stateDir,
     serviceManager: manager,
-    beforeServiceStop: browserSessionValue
+    beforeServiceStop: state.credential
       ? () =>
-          revokeMacosSetupCredential({
-            stateDir,
-            browserSession: browserSessionValue,
-          })
+          authorizeDeviceDisconnect({
+            serverUrl: state.serverUrl,
+            deviceId: state.deviceId,
+          }).then(() => undefined)
       : undefined,
   });
   process.stdout.write("Uninstalled: launchd service and managed Codex capture changes removed; server history preserved.\n");

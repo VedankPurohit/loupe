@@ -29,10 +29,15 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # This committed profile is loopback HTTP. The server image itself keeps
+      # NODE_ENV=production so hosted HTTPS deployments emit Secure cookies.
+      - NODE_ENV=development
       - DATABASE_URL=postgresql://${POSTGRES_USER:-agent_observer}:${POSTGRES_PASSWORD:-agent_observer}@postgres:5432/${POSTGRES_DB:-agent_observer}
       - HOST=0.0.0.0
       - PORT=3000
       - BOOTSTRAP_CODE
+      - GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID:-}
+      - GOOGLE_AUTH_ALLOWED_ORIGINS=${GOOGLE_AUTH_ALLOWED_ORIGINS:-http://127.0.0.1:${WEB_PORT:-8080}}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
     healthcheck:

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Loupe setup guidance</title>
+    <style>
+      :root { color: #17342b; background: #f0f0e8; font: 16px/1.55 system-ui, sans-serif; }
+      body { max-width: 760px; margin: 0 auto; padding: 48px 22px 72px; }
+      a { color: #17342b; }
+      h1, h2 { font-family: Georgia, serif; font-weight: 500; letter-spacing: -.04em; line-height: 1; }
+      h1 { font-size: clamp(2.8rem, 8vw, 5rem); margin: 8px 0 20px; }
+      h2 { font-size: 2rem; margin: 42px 0 10px; }
+      .eyebrow { color: #b5573d; font: 700 .72rem ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+      .panel { border: 1px solid #17342b; background: #f8f8f1; padding: 18px; margin-top: 22px; }
+      code { font: .86em ui-monospace, monospace; }
+      footer { border-top: 1px solid #17342b; margin-top: 48px; padding-top: 14px; color: #62736a; font-size: .84rem; }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow">Loupe / local setup guidance</p>
+    <h1>From a trusted hook to a useful Session.</h1>
+    <p>Loupe is a local-first observability surface for supported Codex capture. This page names the safe starting path without implying unsupported fidelity or production hosting.</p>
+    <section class="panel" aria-labelledby="path-title">
+      <h2 id="path-title">The path</h2>
+      <ol>
+        <li>Start the local PostgreSQL, Fastify, and Vite services from the repository root.</li>
+        <li>Open the homepage and authenticate with the configured Google Web client.</li>
+        <li>Create an Organization, redeem an Administrator invite, or select an existing membership.</li>
+        <li>Use Device diagnostics to verify hook trust, relay health, and delivery acknowledgement.</li>
+        <li>Inspect captured Sessions only after the evidence path is available. Unsupported fields remain explicitly unavailable.</li>
+      </ol>
+    </section>
+    <h2>What Loupe does not do yet</h2>
+    <p>This local milestone does not promise production domains, managed hosting, or complete provider Context/cost fidelity. Seeded Example data is synthetic and stays labelled as such.</p>
+    <p><a href="/">← Return to Loupe homepage</a></p>
+    <footer>Keep credentials in the browser-authorized flow. Never copy cookies, ID tokens, or secrets into commands, issues, or source.</footer>
+  </body>
+</html>

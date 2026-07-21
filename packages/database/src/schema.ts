@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -9,6 +10,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   varchar,
@@ -16,18 +18,25 @@ import {
 
 export const memberRole = pgEnum("member_role", ["member", "administrator"]);
 
+export const persons = pgTable(
+  "persons",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    displayName: text("display_name").notNull(),
+    email: text("email"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("persons_email_profile_idx").on(table.email)],
+);
+
 export const organizations = pgTable(
   "organizations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    singletonKey: integer("singleton_key").notNull().default(1),
     name: text("name").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [
-    uniqueIndex("organizations_singleton_key_unique").on(table.singletonKey),
-    check("organizations_singleton_key_check", sql`${table.singletonKey} = 1`),
-  ],
 );
 
 export const organizationMembers = pgTable(
@@ -37,13 +46,34 @@ export const organizationMembers = pgTable(
     organizationId: uuid("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "restrict" }),
+    personId: uuid("person_id").references(() => persons.id, {
+      onDelete: "restrict",
+    }),
     displayName: text("display_name").notNull(),
     role: memberRole("role").notNull(),
     isExample: boolean("is_example").notNull().default(false),
     examplePackVersion: text("example_pack_version"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("organization_members_organization_idx").on(table.organizationId)],
+  (table) => [
+    index("organization_members_organization_idx").on(table.organizationId),
+    index("organization_members_person_idx").on(table.personId),
+    uniqueIndex("organization_members_organization_person_unique")
+      .on(table.organizationId, table.personId)
+      .where(sql`${table.personId} is not null`),
+    unique("organization_members_id_person_unique").on(
+      table.id,
+      table.personId,
+    ),
+    unique("organization_members_id_organization_unique").on(
+      table.id,
+      table.organizationId,
+    ),
+    check(
+      "organization_members_person_kind_check",
+      sql`(${table.isExample} = true and ${table.personId} is null) or (${table.isExample} = false and ${table.personId} is not null)`,
+    ),
+  ],
 );
 
 export const bootstrapCredentials = pgTable(
@@ -69,15 +99,76 @@ export const browserSessions = pgTable(
   "browser_sessions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    memberId: uuid("member_id")
+    personId: uuid("person_id")
       .notNull()
+      .references(() => persons.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id")
       .references(() => organizationMembers.id, { onDelete: "cascade" }),
     tokenDigest: varchar("token_digest", { length: 128 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
-  (table) => [uniqueIndex("browser_sessions_token_digest_unique").on(table.tokenDigest)],
+  (table) => [
+    uniqueIndex("browser_sessions_token_digest_unique").on(table.tokenDigest),
+    index("browser_sessions_person_idx").on(table.personId),
+    foreignKey({
+      name: "browser_sessions_active_membership_person_fk",
+      columns: [table.memberId, table.personId],
+      foreignColumns: [organizationMembers.id, organizationMembers.personId],
+    }).onDelete("cascade"),
+  ],
+);
+
+export const externalIdentities = pgTable(
+  "external_identities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    personId: uuid("person_id")
+      .notNull()
+      .references(() => persons.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 32 }).notNull(),
+    subject: varchar("subject", { length: 255 }).notNull(),
+    profileEmail: text("profile_email"),
+    profileDisplayName: text("profile_display_name").notNull(),
+    profileAvatarUrl: text("profile_avatar_url"),
+    linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    unlinkedAt: timestamp("unlinked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("external_identities_provider_subject_unique").on(
+      table.provider,
+      table.subject,
+    ),
+    uniqueIndex("external_identities_person_provider_unique").on(
+      table.personId,
+      table.provider,
+    ),
+  ],
+);
+
+export const googleAuthTransactions = pgTable(
+  "google_auth_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    transactionDigest: varchar("transaction_digest", { length: 128 }).notNull(),
+    nonceDigest: varchar("nonce_digest", { length: 128 }).notNull(),
+    csrfDigest: varchar("csrf_digest", { length: 128 }).notNull(),
+    origin: text("origin").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("google_auth_transactions_transaction_digest_unique").on(
+      table.transactionDigest,
+    ),
+    uniqueIndex("google_auth_transactions_nonce_digest_unique").on(
+      table.nonceDigest,
+    ),
+    index("google_auth_transactions_expires_idx").on(table.expiresAt),
+  ],
 );
 
 export const analysisCredentials = pgTable(
@@ -100,6 +191,46 @@ export const analysisCredentials = pgTable(
     uniqueIndex("analysis_credentials_token_digest_unique").on(table.tokenDigest),
     index("analysis_credentials_member_idx").on(table.memberId),
     index("analysis_credentials_organization_idx").on(table.organizationId),
+    unique("analysis_credentials_id_organization_unique").on(
+      table.id,
+      table.organizationId,
+    ),
+    foreignKey({
+      name: "analysis_credentials_member_organization_fk",
+      columns: [table.memberId, table.organizationId],
+      foreignColumns: [organizationMembers.id, organizationMembers.organizationId],
+    }).onDelete("restrict"),
+  ],
+);
+
+export const analysisCredentialGrants = pgTable(
+  "analysis_credential_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => organizationMembers.id, { onDelete: "cascade" }),
+    lookup: varchar("lookup", { length: 32 }).notNull(),
+    name: text("name").notNull(),
+    verifierSalt: varchar("verifier_salt", { length: 128 }).notNull(),
+    verifierDigest: varchar("verifier_digest", { length: 128 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("analysis_credential_grants_lookup_unique").on(table.lookup),
+    index("analysis_credential_grants_member_idx").on(table.memberId),
+    index("analysis_credential_grants_organization_idx").on(table.organizationId),
+    foreignKey({
+      name: "analysis_credential_grants_member_organization_fk",
+      columns: [table.memberId, table.organizationId],
+      foreignColumns: [organizationMembers.id, organizationMembers.organizationId],
+    }).onDelete("cascade"),
   ],
 );
 
@@ -124,6 +255,11 @@ export const inviteCredentials = pgTable(
   (table) => [
     uniqueIndex("invite_credentials_lookup_unique").on(table.lookup),
     index("invite_credentials_organization_idx").on(table.organizationId),
+    foreignKey({
+      name: "invite_credentials_issuer_organization_fk",
+      columns: [table.issuedByMemberId, table.organizationId],
+      foreignColumns: [organizationMembers.id, organizationMembers.organizationId],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -172,6 +308,15 @@ export const enrolledDevices = pgTable(
   (table) => [
     index("enrolled_devices_organization_idx").on(table.organizationId),
     index("enrolled_devices_member_idx").on(table.memberId),
+    unique("enrolled_devices_id_organization_unique").on(
+      table.id,
+      table.organizationId,
+    ),
+    foreignKey({
+      name: "enrolled_devices_member_organization_fk",
+      columns: [table.memberId, table.organizationId],
+      foreignColumns: [organizationMembers.id, organizationMembers.organizationId],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -266,6 +411,58 @@ export const sourceEvents = pgTable(
   ],
 );
 
+export const sourceEventIngestionAttempts = pgTable(
+  "source_event_ingestion_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    deliveringDeviceId: uuid("delivering_device_id")
+      .notNull()
+      .references(() => enrolledDevices.id, { onDelete: "restrict" }),
+    batchId: uuid("batch_id").notNull(),
+    batchOrdinal: integer("batch_ordinal").notNull(),
+    eventId: text("event_id").notNull(),
+    canonicalSessionId: text("canonical_session_id"),
+    source: varchar("source", { length: 64 }),
+    producerVersion: varchar("producer_version", { length: 64 }),
+    producerEvent: text("producer_event"),
+    deduplicationKey: varchar("deduplication_key", { length: 71 }),
+    payloadHash: varchar("payload_hash", { length: 71 }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    acceptanceDisposition: varchar("acceptance_disposition", { length: 16 })
+      .notNull(),
+    acceptanceCode: text("acceptance_code"),
+    acceptedSourceEventId: uuid("accepted_source_event_id").references(
+      () => sourceEvents.id,
+      { onDelete: "restrict" },
+    ),
+    adapterDisposition: varchar("adapter_disposition", { length: 16 }),
+    adapterReason: text("adapter_reason"),
+    fieldPresence: jsonb("field_presence").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("source_event_attempts_org_batch_ordinal_unique").on(
+      table.organizationId,
+      table.batchId,
+      table.batchOrdinal,
+    ),
+    index("source_event_attempts_org_session_received_idx").on(
+      table.organizationId,
+      table.canonicalSessionId,
+      table.receivedAt,
+    ),
+    index("source_event_attempts_org_received_idx").on(
+      table.organizationId,
+      table.receivedAt,
+    ),
+  ],
+);
+
 export const executionSessions = pgTable(
   "execution_sessions",
   {
@@ -356,6 +553,34 @@ export const examplePackImports = pgTable(
     uniqueIndex("example_pack_imports_org_version_unique").on(
       table.organizationId,
       table.version,
+    ),
+  ],
+);
+
+export const syntheticEvidenceRecords = pgTable(
+  "synthetic_evidence_records",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => executionSessions.id, { onDelete: "cascade" }),
+    packVersion: text("pack_version").notNull(),
+    recordKind: varchar("record_kind", { length: 48 }).notNull(),
+    ordinal: integer("ordinal").notNull(),
+    payload: jsonb("payload").notNull(),
+  },
+  (table) => [
+    uniqueIndex("synthetic_evidence_session_kind_ordinal_unique").on(
+      table.sessionId,
+      table.recordKind,
+      table.ordinal,
+    ),
+    index("synthetic_evidence_org_session_idx").on(
+      table.organizationId,
+      table.sessionId,
     ),
   ],
 );

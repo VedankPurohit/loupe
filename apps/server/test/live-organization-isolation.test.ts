@@ -42,9 +42,13 @@ describe.sequential("live execution Organization isolation", () => {
     firstOrganizationCookie = bootstrap.headers.getSetCookie()[0]!.split(";", 1)[0]!;
 
     const sql = postgres(testDatabase.databaseUrl, { max: 1 });
-    await sql`alter table organizations drop constraint organizations_singleton_key_check`;
-    await sql`drop index organizations_singleton_key_unique`;
+    // The multi-Organization migration already removes the legacy singleton
+    // guard. Keep this compatibility fixture idempotent for databases created
+    // from either schema generation point.
+    await sql`alter table organizations drop constraint if exists organizations_singleton_key_check`;
+    await sql`drop index if exists organizations_singleton_key_unique`;
     const secondOrganizationId = randomUUID();
+    const secondPersonId = randomUUID();
     const secondMemberId = randomUUID();
     const secondDeviceId = randomUUID();
     secondOrganizationDeviceCredential = `device_${randomUUID()}`;
@@ -52,12 +56,16 @@ describe.sequential("live execution Organization isolation", () => {
       .update(secondOrganizationDeviceCredential)
       .digest("base64url");
     await sql`
-      insert into organizations (id, singleton_key, name)
-      values (${secondOrganizationId}, 2, 'Second Organization')
+      insert into organizations (id, name)
+      values (${secondOrganizationId}, 'Second Organization')
     `;
     await sql`
-      insert into organization_members (id, organization_id, display_name, role)
-      values (${secondMemberId}, ${secondOrganizationId}, 'Second Member', 'member')
+      insert into persons (id, display_name)
+      values (${secondPersonId}, 'Second Person')
+    `;
+    await sql`
+      insert into organization_members (id, organization_id, person_id, display_name, role)
+      values (${secondMemberId}, ${secondOrganizationId}, ${secondPersonId}, 'Second Member', 'member')
     `;
     await sql`
       insert into enrolled_devices (id, organization_id, member_id, name)

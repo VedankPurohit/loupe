@@ -1,0 +1,122 @@
+.device-diagnostics {
+  display: grid;
+  gap: 18px;
+}
+
+.device-diagnostic {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #526368;
+  background: #11191d;
+}
+
+.device-diagnostic-heading,
+.installation-health > header,
+.installation-health > footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.device-diagnostic-heading h3,
+.installation-health h4,
+.installation-health h5 {
+  margin: 4px 0 0;
+}
+
+.installation-health {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 2px solid #b6dc56;
+  background: #182126;
+}
+
+.diagnostic-proof {
+  padding: 5px 8px;
+  color: #101610;
+  background: #b6dc56;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.diagnostic-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: #526368;
+  border: 1px solid #526368;
+}
+
+.diagnostic-facts > div {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  background: #11191d;
+}
+
+.diagnostic-facts dt {
+  color: #9eafb3;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.diagnostic-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-repair {
+  padding: 12px;
+  border-left: 4px solid #e3b953;
+  background: #241f17;
+}
+
+.diagnostic-repair ul {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding-left: 20px;
+}
+
+.diagnostic-repair li span,
+.diagnostic-empty span {
+  display: block;
+  margin-top: 3px;
+  color: #b8c6c9;
+}
+
+.installation-health > footer {
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.installation-health a {
+  color: #d4f57e;
+}
+
+.diagnostic-empty {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed #526368;
+}
+
+@media (max-width: 640px) {
+  .device-diagnostic-heading,
+  .installation-health > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .diagnostic-proof {
+    align-self: flex-start;
+  }
+}

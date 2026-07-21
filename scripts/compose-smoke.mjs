@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 
+import { request as playwrightRequest } from "@playwright/test";
+
 const root = new URL("..", import.meta.url);
 const projectName = `agent-observer-smoke-${process.pid}`;
 const sessionId = `session-compose-${randomUUID()}`;
@@ -57,6 +59,29 @@ async function jsonRequest(baseUrl, path, { expected = 200, ...init } = {}) {
   return { body, response };
 }
 
+async function browserJsonRequest(browser, path, { expected = 200, ...init } = {}) {
+  const response = await browser.fetch(path, init);
+  const body = await response.json().catch(() => undefined);
+  if (response.status() !== expected) {
+    throw new Error(
+      `${init.method ?? "GET"} ${path}: expected ${expected}, got ${response.status()}: ${JSON.stringify(body)}`,
+    );
+  }
+  return { body, response };
+}
+
+function redactCredentials(value) {
+  return value
+    .replace(
+      /\b(bootstrap|device|analysis)_[A-Za-z0-9_-]{43,}\b/g,
+      "$1_[REDACTED]",
+    )
+    .replace(
+      /\benroll_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}\b/g,
+      "enroll_[REDACTED]",
+    );
+}
+
 async function waitForHealth(baseUrl, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -84,14 +109,18 @@ const composeEnv = {
   ...hostEnvironment,
   APP_PORT: String(appPort),
   WEB_PORT: String(webPort),
+  GOOGLE_WEB_CLIENT_ID: "compose-smoke.apps.googleusercontent.com",
+  GOOGLE_AUTH_ALLOWED_ORIGINS: webBaseUrl,
 };
 let started = false;
+let browser;
 
 async function compose(...args) {
   return command("docker", [...composeArgs, ...args], { env: composeEnv });
 }
 
 async function cleanup() {
+  await browser?.dispose().catch(() => undefined);
   if (!started) return;
   await compose("down", "--volumes", "--remove-orphans").catch(() => undefined);
 }
@@ -113,6 +142,7 @@ try {
   await compose("down", "--volumes", "--remove-orphans");
   report("build-and-start", { appPort, webPort });
   await compose("up", "--build", "--wait");
+  browser = await playwrightRequest.newContext({ baseURL: webBaseUrl });
   const appLogs = await compose("logs", "--no-color", "app");
   const bootstrapCode = appLogs.stdout.match(/bootstrap_[A-Za-z0-9_-]{43,}/)?.[0];
   assert(
@@ -135,28 +165,57 @@ try {
   const web = await fetch(webBaseUrl);
   const webHtml = await web.text();
   assert(web.ok && webHtml.includes('id="root"'), "Production web assets were not served.");
+  const guide = await fetch(`${webBaseUrl}/guide.html`);
+  const guideHtml = await guide.text();
+  assert(
+    guide.ok && /Loupe/i.test(guideHtml),
+    "The packaged public setup guide was not served.",
+  );
   const proxiedHealth = await jsonRequest(webBaseUrl, "/api/v1/health");
   assert(proxiedHealth.body.status === "ok", "The web /api reverse proxy is unhealthy.");
+  const googleTransaction = await jsonRequest(
+    webBaseUrl,
+    "/api/v1/auth/google/transactions",
+    {
+      method: "POST",
+      expected: 201,
+      headers: { origin: webBaseUrl },
+    },
+  );
+  assert(
+    googleTransaction.body.clientId === composeEnv.GOOGLE_WEB_CLIENT_ID,
+    "The packaged API did not expose its configured public Google client ID.",
+  );
 
-  report("bootstrap-ingest-query");
-  const bootstrap = await jsonRequest(appBaseUrl, "/api/v1/bootstrap/redeem", {
+  report("public-browser-enrollment-ingest-query");
+  const bootstrap = await browserJsonRequest(browser, "/api/v1/bootstrap/redeem", {
     method: "POST",
     expected: 201,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+    data: {
       code: bootstrapCode,
       organization: { name: "Compose Smoke Organization" },
       administrator: { displayName: "Compose Administrator" },
-    }),
+    },
   });
-  const browserCookie = bootstrap.response.headers.get("set-cookie")?.split(";", 1)[0];
-  assert(browserCookie, "Bootstrap did not issue the browser session cookie.");
-  const grant = await jsonRequest(appBaseUrl, "/api/v1/device-enrollment-grants", {
-    method: "POST",
-    expected: 201,
-    headers: { "content-type": "application/json", cookie: browserCookie },
-    body: JSON.stringify({ deviceName: "Compose Smoke Device" }),
-  });
+  assert(bootstrap.body.member.role === "administrator", "Bootstrap did not authenticate the browser.");
+  const callback = "http://127.0.0.1:43191/callback";
+  const authorizationPath = `/api/v1/device-enrollment/authorize?deviceName=${encodeURIComponent("Compose Smoke Device")}&callback=${encodeURIComponent(callback)}&state=${randomUUID()}`;
+  const authorizationPreview = await browser.get(authorizationPath);
+  const authorizationPreviewHtml = await authorizationPreview.text();
+  assert(
+    authorizationPreview.ok() &&
+      !authorizationPreviewHtml.includes('name="grant"'),
+    "The packaged browser authorization preview was not safe or available.",
+  );
+  const authorization = await browser.post(authorizationPath);
+  const authorizationHtml = await authorization.text();
+  const enrollmentGrant = /name="grant" value="([^"]+)"/.exec(
+    authorizationHtml,
+  )?.[1];
+  assert(
+    authorization.ok() && enrollmentGrant,
+    "The packaged browser authorization did not issue a Device enrollment handoff.",
+  );
   const enrollment = await jsonRequest(
     appBaseUrl,
     "/api/v1/device-enrollments/redeem",
@@ -164,7 +223,7 @@ try {
       method: "POST",
       expected: 201,
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ grant: grant.body.grant }),
+      body: JSON.stringify({ grant: enrollmentGrant }),
     },
   );
 
@@ -209,14 +268,11 @@ try {
     delivery.body.results?.[0]?.status === "accepted",
     "The packaged API did not accept the source event.",
   );
-  const eventBefore = await jsonRequest(appBaseUrl, `/api/v1/source-events/${eventId}`, {
-    headers: { cookie: browserCookie },
-  });
+  const eventBefore = await browserJsonRequest(browser, `/api/v1/source-events/${eventId}`);
   assert(eventBefore.body.id === eventId, "Accepted source evidence was not queryable.");
-  const activityBefore = await jsonRequest(
-    appBaseUrl,
+  const activityBefore = await browserJsonRequest(
+    browser,
     `/api/v1/organization/activity?q=${encodeURIComponent(sessionId)}`,
-    { headers: { cookie: browserCookie } },
   );
   assert(
     activityBefore.body.items?.some((item) => item.id === sessionId),
@@ -226,14 +282,11 @@ try {
   report("restart-and-verify-persistence", { sessionId });
   await compose("restart", "app");
   await waitForHealth(appBaseUrl);
-  const eventAfter = await jsonRequest(appBaseUrl, `/api/v1/source-events/${eventId}`, {
-    headers: { cookie: browserCookie },
-  });
+  const eventAfter = await browserJsonRequest(browser, `/api/v1/source-events/${eventId}`);
   assert(eventAfter.body.id === eventId, "Source evidence was lost across restart.");
-  const activityAfter = await jsonRequest(
-    appBaseUrl,
+  const activityAfter = await browserJsonRequest(
+    browser,
     `/api/v1/organization/activity?q=${encodeURIComponent(sessionId)}`,
-    { headers: { cookie: browserCookie } },
   );
   assert(
     activityAfter.body.items?.some((item) => item.id === sessionId),
@@ -255,19 +308,17 @@ try {
     "app",
     "web",
   );
-  const activityAfterReplacement = await jsonRequest(
-    appBaseUrl,
+  const activityAfterReplacement = await browserJsonRequest(
+    browser,
     `/api/v1/organization/activity?q=${encodeURIComponent(sessionId)}`,
-    { headers: { cookie: browserCookie } },
   );
   assert(
     activityAfterReplacement.body.items?.some((item) => item.id === sessionId),
     "The same Session was not retained after application image replacement.",
   );
-  const eventAfterReplacement = await jsonRequest(
-    appBaseUrl,
+  const eventAfterReplacement = await browserJsonRequest(
+    browser,
     `/api/v1/source-events/${eventId}`,
-    { headers: { cookie: browserCookie } },
   );
   assert(
     eventAfterReplacement.body.id === eventId,
@@ -285,8 +336,10 @@ try {
       ])
     : [];
   report("failed", {
-    error: error instanceof Error ? error.message : String(error),
-    diagnostics: diagnostics.map(({ stdout, stderr }) => `${stdout ?? ""}${stderr ?? ""}`),
+    error: redactCredentials(error instanceof Error ? error.message : String(error)),
+    diagnostics: diagnostics.map(({ stdout, stderr }) =>
+      redactCredentials(`${stdout ?? ""}${stderr ?? ""}`),
+    ),
   });
   process.exitCode = 1;
 } finally {

@@ -1,0 +1,6 @@
+ALTER TABLE "analysis_credentials" ADD CONSTRAINT "analysis_credentials_id_organization_unique" UNIQUE("id","organization_id");--> statement-breakpoint
+ALTER TABLE "enrolled_devices" ADD CONSTRAINT "enrolled_devices_id_organization_unique" UNIQUE("id","organization_id");--> statement-breakpoint
+ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_id_organization_unique" UNIQUE("id","organization_id");--> statement-breakpoint
+ALTER TABLE "analysis_credentials" ADD CONSTRAINT "analysis_credentials_member_organization_fk" FOREIGN KEY ("member_id","organization_id") REFERENCES "public"."organization_members"("id","organization_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "enrolled_devices" ADD CONSTRAINT "enrolled_devices_member_organization_fk" FOREIGN KEY ("member_id","organization_id") REFERENCES "public"."organization_members"("id","organization_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "invite_credentials" ADD CONSTRAINT "invite_credentials_issuer_organization_fk" FOREIGN KEY ("issued_by_member_id","organization_id") REFERENCES "public"."organization_members"("id","organization_id") ON DELETE restrict ON UPDATE no action;

@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+import {
+  OrganizationMemberSchema,
+  OrganizationSchema,
+  PersonSchema,
+} from "./identity.js";
+
+export * from "./identity.js";
+export * from "./google-auth.js";
+
 export const browserSessionCookieName = "browser_session";
 export const browserSessionSecuritySchemeName = "browserSession";
 export const browserSessionOpenApiSecurityScheme = {
@@ -45,17 +54,6 @@ export const HealthResponseSchema = z.object({
   apiVersion: z.literal("v1"),
 });
 
-export const OrganizationSchema = z.object({
-  id: z.uuid(),
-  name: z.string(),
-});
-
-export const OrganizationMemberSchema = z.object({
-  id: z.uuid(),
-  displayName: z.string(),
-  role: z.enum(["member", "administrator"]),
-});
-
 export const AnalysisCredentialScopeSchema = z.enum([
   "organization:evidence:read",
   "candidate:submit",
@@ -76,6 +74,18 @@ export const AnalysisCredentialCreateResponseSchema = z.object({
   credential: z.string().regex(/^analysis_[A-Za-z0-9_-]{43}$/),
   analysisCredential: AnalysisCredentialSchema,
 });
+export const AnalysisCredentialAuthorizationQuerySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  callback: z.string().url(),
+  state: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
+});
+export const AnalysisCredentialGrantResponseSchema = z.object({
+  grant: z.string().regex(/^analysis_grant_[A-Za-z0-9_-]{16,256}$/),
+  expiresAt: z.iso.datetime(),
+});
+export const AnalysisCredentialGrantRedeemRequestSchema = z.object({
+  grant: z.string().min(1),
+});
 export const AnalysisCredentialsResponseSchema = z.object({
   analysisCredentials: z.array(AnalysisCredentialSchema),
 });
@@ -92,20 +102,44 @@ export const BootstrapRedeemRequestSchema = z.object({
 });
 
 export const AuthenticatedSessionResponseSchema = z.object({
+  person: PersonSchema,
   organization: OrganizationSchema,
   member: OrganizationMemberSchema,
 });
+
+export const AnalysisCredentialStatusResponseSchema =
+  AuthenticatedSessionResponseSchema.extend({
+    analysisCredential: AnalysisCredentialSchema,
+  });
+
+export const PersonBrowserSessionResponseSchema = z.object({
+  person: PersonSchema,
+  organization: OrganizationSchema.nullable(),
+  member: OrganizationMemberSchema.nullable(),
+});
+export type PersonBrowserSessionResponse = z.infer<
+  typeof PersonBrowserSessionResponseSchema
+>;
 
 export const InviteCodeRequestSchema = z.object({
   expiresInHours: z.number().int().min(1).max(168).optional(),
 });
 export const InviteCodeResponseSchema = z.object({
+  id: z.uuid(),
   code: z.string(),
   expiresAt: z.iso.datetime(),
+  role: z.literal("member"),
 });
+export const InviteCodeIdParamsSchema = z.object({ id: z.uuid() });
 export const InviteCodeRedeemRequestSchema = z.object({
   code: z.string().min(1),
-  member: z.object({ displayName: z.string().trim().min(1).max(120) }),
+  member: z
+    .object({ displayName: z.string().trim().min(1).max(120) })
+    .optional(),
+});
+
+export const ActiveMembershipSelectionRequestSchema = z.object({
+  membershipId: z.uuid(),
 });
 
 export const CapturePolicySchema = z.object({
@@ -126,6 +160,23 @@ export const EnrolledDeviceSchema = z.object({
 
 export const DeviceEnrollmentGrantRequestSchema = z.object({
   deviceName: z.string().trim().min(1).max(120),
+});
+
+/**
+ * Browser-authorized installer hand-off.  The callback is always a loopback
+ * HTTP endpoint owned by the installer; the browser contributes its existing
+ * HttpOnly Loupe session cookie, never the installer.
+ */
+export const DeviceEnrollmentAuthorizationQuerySchema = z.object({
+  deviceName: z.string().trim().min(1).max(120),
+  callback: z.string().url(),
+  state: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
+});
+
+export const DeviceDisconnectAuthorizationQuerySchema = z.object({
+  deviceId: z.uuid(),
+  callback: z.string().url(),
+  state: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
 });
 
 export const DeviceEnrollmentGrantResponseSchema = z.object({
@@ -278,13 +329,135 @@ export const RetainedSourceEventSchema = SourceEventSchema.extend({
   delivery: z.object({ deviceId: z.uuid(), batchId: z.uuid() }),
 });
 
-export const EvidenceSchema = z.object({
-  stability: z.array(
-    z.enum(["documented", "observed", "inferred", "unstable", "unavailable"]),
+export const StructuralCaptureLedgerQuerySchema = z
+  .object({
+    sessionId: z.string().min(1).optional(),
+    receivedFrom: z.iso.datetime().optional(),
+    receivedTo: z.iso.datetime().optional(),
+    cursor: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
+    limit: z.coerce.number().int().min(1).max(500).default(200),
+  })
+  .superRefine((query, context) => {
+    const sessionScope = query.sessionId !== undefined;
+    const windowScope =
+      query.receivedFrom !== undefined && query.receivedTo !== undefined;
+    if (sessionScope === windowScope) {
+      context.addIssue({
+        code: "custom",
+        message: "Select exactly one Session or one bounded receipt-time window.",
+      });
+    }
+    if (
+      windowScope &&
+      new Date(query.receivedFrom!).getTime() > new Date(query.receivedTo!).getTime()
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "The receipt-time window start must not follow its end.",
+      });
+    }
+  });
+
+export const StructuralCaptureLedgerResponseSchema = z.object({
+  scope: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("session"), sessionId: z.string().min(1) }),
+    z.object({
+      kind: z.literal("receipt_window"),
+      receivedFrom: z.iso.datetime(),
+      receivedTo: z.iso.datetime(),
+    }),
+  ]),
+  observations: z.array(
+    z.object({
+      observationId: z.uuid(),
+      sourceEventId: z.uuid().nullable(),
+      sourceFamily: z.string().min(1).nullable(),
+      producerVersion: z.string().min(1).nullable(),
+      eventName: z.string().min(1).nullable(),
+      sourceIdentity: z.string().min(1).nullable(),
+      payloadHash: z.string().min(1).nullable(),
+      occurredAt: z.iso.datetime().nullable(),
+      receivedAt: z.iso.datetime(),
+      acceptance: z.object({
+        disposition: z.enum(["accepted", "duplicate", "rejected"]),
+        code: z.string().min(1).nullable(),
+      }),
+      adapter: z.object({
+        disposition: z.enum([
+          "adapted",
+          "preserved",
+          "downgraded",
+          "rejected",
+          "unavailable",
+        ]),
+        reason: z.string().min(1).nullable(),
+      }),
+      fieldPresence: z.object({
+        sessionIdentity: z.boolean(),
+        turnIdentity: z.boolean(),
+        traceIdentity: z.boolean(),
+        gitContext: z.boolean(),
+        canonicalObservations: z.boolean(),
+      }),
+      projectionReferences: z.object({
+        sessions: z.array(z.string()),
+        turns: z.array(z.string()),
+        agentRuns: z.array(z.string()),
+        activityEpisodes: z.array(z.string()),
+        timeline: z.array(z.string()),
+      }),
+    }),
   ),
-  derivation: z.enum(["exact", "inferred", "unavailable"]),
-  sourceEventIds: z.array(z.uuid()),
+  nextCursor: z.string().nullable(),
 });
+
+export const EvidenceReferenceSchema = z.discriminatedUnion("origin", [
+  z.object({
+    origin: z.literal("captured_source_event"),
+    sourceEventId: z.uuid(),
+  }),
+  z.object({
+    origin: z.literal("example_pack_server_controlled"),
+    examplePackVersion: z.string().min(1),
+    syntheticEvidenceId: z.uuid(),
+  }),
+]);
+
+export const EvidenceSchema = z
+  .object({
+    stability: z.array(
+      z.enum(["documented", "observed", "inferred", "unstable", "unavailable"]),
+    ),
+    derivation: z.enum(["exact", "inferred", "unavailable"]),
+    sourceEventIds: z.array(z.uuid()),
+    references: z.array(EvidenceReferenceSchema).optional(),
+  })
+  .superRefine((e, ctx) => {
+    const synthetic =
+      e.references?.filter(
+        (reference) => reference.origin === "example_pack_server_controlled",
+      ) ?? [];
+    const captured =
+      e.references?.filter(
+        (reference) => reference.origin === "captured_source_event",
+      ) ?? [];
+    if (synthetic.length && (e.sourceEventIds.length || captured.length)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["references"],
+        message: "Example-pack evidence cannot reference captured Source events.",
+      });
+    }
+    for (const reference of captured) {
+      if (!e.sourceEventIds.includes(reference.sourceEventId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["references"],
+          message: "Captured references must match sourceEventIds.",
+        });
+      }
+    }
+  });
 
 export const ReconciliationInputSchema = z.object({
   sourceEventId: z.uuid(),
@@ -302,14 +475,49 @@ export const ReconciliationSchema = z.object({
   confidence: z.enum(["high", "medium", "low", "none"]),
 });
 
-export const ActivityEpisodeSchema = z.object({
-  id: z.string().min(1),
-  source: z.enum(["startup", "resume", "clear", "compact", "observed"]),
-  state: z.enum(["live", "idle", "resumed"]),
-  startedAt: z.iso.datetime(),
-  endedAt: z.iso.datetime().nullable(),
-  sourceEventId: z.uuid(),
-});
+export const ActivityEpisodeSchema = z
+  .object({
+    id: z.string().min(1),
+    source: z.enum(["startup", "resume", "clear", "compact", "observed"]),
+    state: z.enum(["live", "idle", "resumed"]),
+    startedAt: z.iso.datetime(),
+    endedAt: z.iso.datetime().nullable(),
+    sourceEventId: z.uuid().nullable(),
+    reference: EvidenceReferenceSchema.optional(),
+  })
+  .superRefine((row, ctx) => {
+    if (
+      row.sourceEventId === null &&
+      row.reference?.origin !== "example_pack_server_controlled"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference"],
+        message:
+          "A Source-event-free row requires server-controlled Example-pack provenance.",
+      });
+    }
+    if (
+      row.sourceEventId !== null &&
+      row.reference?.origin === "example_pack_server_controlled"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference"],
+        message: "Example-pack provenance cannot carry a Source-event id.",
+      });
+    }
+    if (
+      row.reference?.origin === "captured_source_event" &&
+      row.reference.sourceEventId !== row.sourceEventId
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference"],
+        message: "Captured reference must match sourceEventId.",
+      });
+    }
+  });
 
 export const TurnSchema = z.object({
   id: z.string().min(1),
@@ -370,14 +578,49 @@ export const ExecutionSessionsResponseSchema = z.object({
   sessions: z.array(ExecutionSessionSchema),
 });
 export const ExecutionSessionIdParamsSchema = z.object({ id: z.string().min(1) });
-export const TimelineEventSchema = z.object({
-  sourceEventId: z.uuid(),
-  event: z.string().min(1),
-  occurredAt: z.iso.datetime(),
-  turnId: z.string().nullable(),
-  agentRunId: z.string().nullable(),
-  evidence: EvidenceSchema,
-});
+export const TimelineEventSchema = z
+  .object({
+    sourceEventId: z.uuid().nullable(),
+    reference: EvidenceReferenceSchema.optional(),
+    event: z.string().min(1),
+    occurredAt: z.iso.datetime(),
+    turnId: z.string().nullable(),
+    agentRunId: z.string().nullable(),
+    evidence: EvidenceSchema,
+  })
+  .superRefine((row, ctx) => {
+    if (
+      row.sourceEventId === null &&
+      row.reference?.origin !== "example_pack_server_controlled"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference"],
+        message:
+          "A Source-event-free row requires server-controlled Example-pack provenance.",
+      });
+    }
+    if (
+      row.sourceEventId !== null &&
+      row.reference?.origin === "example_pack_server_controlled"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference"],
+        message: "Example-pack provenance cannot carry a Source-event id.",
+      });
+    }
+    if (
+      row.reference?.origin === "captured_source_event" &&
+      row.reference.sourceEventId !== row.sourceEventId
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference"],
+        message: "Captured reference must match sourceEventId.",
+      });
+    }
+  });
 
 export const TurnAssociationSchema = z.object({
   turnId: z.string().nullable(),
@@ -496,6 +739,7 @@ export const CostEstimateSchema = z.object({
   }),
   billingCaveat: z.string().min(1),
   reason: z.string().min(1).nullable(),
+  evidence: EvidenceSchema.optional(),
 });
 
 export const CapabilityEvidenceSchema = z.object({
@@ -990,14 +1234,22 @@ export const SessionAnnotationRequestSchema = z
 export const SessionAnnotationResponseSchema = ExecutionSessionSchema.shape.annotations;
 
 export const ExamplePackParamsSchema = z.object({
-  version: z.literal("starter-v1"),
+  version: z.enum(["starter-v1", "rich-v1"]),
 });
+export const EmptyRequestBodySchema = z.object({}).strict().nullish();
 export const ExamplePackImportResponseSchema = z.object({
-  version: z.literal("starter-v1"),
+  version: z.enum(["starter-v1", "rich-v1"]),
   imported: z.boolean(),
   exampleMemberId: z.uuid(),
   sessionIds: z.array(z.string().min(1)),
   syntheticDesignation: z.literal("seeded"),
+  counts: z.object({
+    members: z.number().int().nonnegative(),
+    sessions: z.number().int().nonnegative(),
+    turns: z.number().int().nonnegative(),
+    agentRuns: z.number().int().nonnegative(),
+    detailRecords: z.number().int().nonnegative(),
+  }),
 });
 
 export const LiveExecutionEventSchema = z.object({
@@ -1023,10 +1275,16 @@ export type AnalysisCredentialCreateRequest = z.infer<
 export type AnalysisCredentialCreateResponse = z.infer<
   typeof AnalysisCredentialCreateResponseSchema
 >;
+export type AnalysisCredentialGrantResponse = z.infer<
+  typeof AnalysisCredentialGrantResponseSchema
+>;
 export type InviteCodeRequest = z.infer<typeof InviteCodeRequestSchema>;
 export type InviteCodeResponse = z.infer<typeof InviteCodeResponseSchema>;
 export type InviteCodeRedeemRequest = z.infer<
   typeof InviteCodeRedeemRequestSchema
+>;
+export type ActiveMembershipSelectionRequest = z.infer<
+  typeof ActiveMembershipSelectionRequestSchema
 >;
 export type CapturePolicy = z.infer<typeof CapturePolicySchema>;
 export type EnrolledDevice = z.infer<typeof EnrolledDeviceSchema>;
@@ -1055,6 +1313,14 @@ export type SourceEventBatchResponse = z.infer<
   typeof SourceEventBatchResponseSchema
 >;
 export type RetainedSourceEvent = z.infer<typeof RetainedSourceEventSchema>;
+export type StructuralCaptureLedgerQuery = z.infer<
+  typeof StructuralCaptureLedgerQuerySchema
+>;
+export type StructuralCaptureLedgerResponse = z.infer<
+  typeof StructuralCaptureLedgerResponseSchema
+>;
+export type EvidenceReference = z.infer<typeof EvidenceReferenceSchema>;
+export type Evidence = z.infer<typeof EvidenceSchema>;
 export type Reconciliation = z.infer<typeof ReconciliationSchema>;
 export type ActivityEpisode = z.infer<typeof ActivityEpisodeSchema>;
 export type Turn = z.infer<typeof TurnSchema>;

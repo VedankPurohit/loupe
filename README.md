@@ -98,7 +98,10 @@ All public HTTP routes live under `/api/v1`. The initial routes are:
 - `POST /api/v1/invites` (Administrator browser session only)
 - `POST /api/v1/invites/redeem`
 - `POST /api/v1/device-enrollment-grants`
+- `GET`/`POST /api/v1/device-enrollment/authorize` (browser-confirmed loopback installer hand-off)
 - `POST /api/v1/device-enrollments/redeem`
+- `GET`/`POST /api/v1/device-disconnect/authorize` (browser-confirmed disconnect)
+- `POST /api/v1/device-connection/revoke` (newly Enrolled device self-revocation for failed-setup rollback)
 - `GET /api/v1/devices`
 - `PATCH /api/v1/devices/:id/capture-policy`
 - `POST /api/v1/devices/:id/revoke`
@@ -215,10 +218,9 @@ pnpm test:compose
 - [`docs/production-investigation-interface.md`](./docs/production-investigation-interface.md) — selected production interface, synchronized evidence views, accessibility, live recovery, and deep links.
 - [`docs/investigation-prototypes.md`](./docs/investigation-prototypes.md) — three working ticket-11 investigation directions, their run commands, evaluation matrix, and screenshot checklist for the user-selection gate.
 - [`docs/macos-codex-setup.md`](./docs/macos-codex-setup.md) — setup preview and consent, `launchd`, configuration backup/restore, disconnect, uninstall, recovery, and the executable first-day checkpoint.
-- [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.
-- [Build-ready specification](./.scratch/coding-agent-observability/spec.md) — normative product, architecture, testing, and acceptance strategy.
-- [Implementation tickets](./.scratch/coding-agent-observability-implementation/issues/) — 16 typed, test-planned work packages with explicit blockers and documentation obligations.
-- [Visual build route](./.scratch/coding-agent-observability-implementation/roadmap.html) — interactive overview of phases, checkpoints, ticket dependencies, and scope boundaries.
+- [Continuation Wayfinder map](./.scratch/coding-agent-observability-continuation/map.md) — capture, synthetic-data, UI, identity, and deployment decisions with supporting research.
+- [Current specification](./.scratch/coding-agent-observability-local-presentability/spec.md) — normative local-presentability, multi-Organization, authentication, testing, and acceptance strategy.
+- [Current implementation tickets](./.scratch/coding-agent-observability-local-presentability/issues/) — 17 tracer-bullet work packages with explicit blockers and public testing seams.
 
 ## Publishing guardrail
 

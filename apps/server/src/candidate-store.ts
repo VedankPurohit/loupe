@@ -816,12 +816,22 @@ export class CandidateStore {
         const releases = await this.database
           .select()
           .from(organizationStandardReleases)
-          .where(eq(organizationStandardReleases.standardId, standard.id))
+          .where(
+            and(
+              eq(organizationStandardReleases.organizationId, organizationId),
+              eq(organizationStandardReleases.standardId, standard.id),
+            ),
+          )
           .orderBy(asc(organizationStandardReleases.approvedAt));
         const installations = await this.database
           .select()
           .from(deviceStandardInstallations)
-          .where(eq(deviceStandardInstallations.standardId, standard.id))
+          .where(
+            and(
+              eq(deviceStandardInstallations.organizationId, organizationId),
+              eq(deviceStandardInstallations.standardId, standard.id),
+            ),
+          )
           .orderBy(desc(deviceStandardInstallations.serverReceivedAt));
         const target = releases.find((release) => release.id === standard.targetReleaseId);
         return {

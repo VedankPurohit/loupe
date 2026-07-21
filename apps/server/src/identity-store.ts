@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import {
+  analysisCredentialGrants,
   analysisCredentials,
   bootstrapCredentials,
   browserSessions,
@@ -16,6 +17,8 @@ import {
   inviteCredentials,
   organizationMembers,
   organizations,
+  persons,
+  sourceEventIngestionAttempts,
   sourceEvents,
 } from "@workspace/database";
 import { SourceEventSchema } from "@workspace/contracts";
@@ -23,6 +26,7 @@ import type {
   AnalysisCredential,
   AnalysisCredentialCreateRequest,
   AnalysisCredentialCreateResponse,
+  AnalysisCredentialGrantResponse,
   AuthenticatedSessionResponse,
   BootstrapRedeemRequest,
   CaptureRecord,
@@ -33,17 +37,25 @@ import type {
   InviteCodeRedeemRequest,
   InviteCodeRequest,
   InviteCodeResponse,
+  OrganizationMembershipCreateResponse,
+  PersonMembershipsResponse,
   RetainedSourceEvent,
   SourceEventBatchResult,
   UpdateDeviceCapturePolicyRequest,
+  PersonBrowserSessionResponse,
 } from "@workspace/contracts";
+
+import { structuralAttemptFields } from "./structural-capture-ledger.js";
 
 const scrypt = promisify(scryptCallback);
 const bootstrapLifetimeMs = 24 * 60 * 60 * 1_000;
 const browserSessionLifetimeMs = 7 * 24 * 60 * 60 * 1_000;
 const deviceEnrollmentGrantLifetimeMs = 10 * 60 * 1_000;
+const analysisCredentialGrantLifetimeMs = 5 * 60 * 1_000;
 const injectedBootstrapCodePattern = /^bootstrap_[A-Za-z0-9_-]{43,}$/;
 const enrollmentGrantPattern = /^enroll_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/;
+const analysisCredentialGrantPattern =
+  /^analysis_grant_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/;
 const inviteCodePattern = /^invite_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/;
 const analysisScopes = [
   "organization:evidence:read",
@@ -55,6 +67,7 @@ export class IdentityError extends Error {
     public readonly code:
       | "BOOTSTRAP_CODE_ALREADY_REDEEMED"
       | "BOOTSTRAP_CODE_INVALID"
+      | "ANALYSIS_CREDENTIAL_GRANT_INVALID"
       | "DEVICE_ENROLLMENT_GRANT_INVALID"
       | "INVITE_CODE_INVALID"
       | "ADMINISTRATOR_REQUIRED",
@@ -262,10 +275,19 @@ export class IdentityStore {
         .insert(organizations)
         .values({ name: input.organization.name })
         .returning({ id: organizations.id, name: organizations.name });
+      const [person] = await transaction
+        .insert(persons)
+        .values({ displayName: input.administrator.displayName })
+        .returning({
+          id: persons.id,
+          displayName: persons.displayName,
+          email: persons.email,
+        });
       const [member] = await transaction
         .insert(organizationMembers)
         .values({
           organizationId: organization!.id,
+          personId: person!.id,
           displayName: input.administrator.displayName,
           role: "administrator",
         })
@@ -277,6 +299,7 @@ export class IdentityStore {
 
       const sessionToken = `session_${randomBytes(32).toString("base64url")}`;
       await transaction.insert(browserSessions).values({
+        personId: person!.id,
         memberId: member!.id,
         tokenDigest: digestSessionToken(sessionToken),
         expiresAt: new Date(Date.now() + browserSessionLifetimeMs),
@@ -286,13 +309,23 @@ export class IdentityStore {
         .set({ active: false, redeemedAt: new Date() })
         .where(eq(bootstrapCredentials.id, credential.id));
 
-      return { organization: organization!, member: member!, sessionToken };
+      return {
+        person: person!,
+        organization: organization!,
+        member: member!,
+        sessionToken,
+      };
     });
   }
 
-  async getSession(token: string): Promise<AuthenticatedSessionResponse | undefined> {
+  async getSession(
+    token: string,
+  ): Promise<AuthenticatedSessionResponse | undefined> {
     const [session] = await this.database
       .select({
+        personId: persons.id,
+        personDisplayName: persons.displayName,
+        personEmail: persons.email,
         organizationId: organizations.id,
         organizationName: organizations.name,
         memberId: organizationMembers.id,
@@ -304,6 +337,7 @@ export class IdentityStore {
         organizationMembers,
         eq(browserSessions.memberId, organizationMembers.id),
       )
+      .innerJoin(persons, eq(organizationMembers.personId, persons.id))
       .innerJoin(
         organizations,
         eq(organizationMembers.organizationId, organizations.id),
@@ -319,6 +353,11 @@ export class IdentityStore {
 
     if (!session) return undefined;
     return {
+      person: {
+        id: session.personId,
+        displayName: session.personDisplayName,
+        email: session.personEmail,
+      },
       organization: {
         id: session.organizationId,
         name: session.organizationName,
@@ -328,6 +367,64 @@ export class IdentityStore {
         displayName: session.memberDisplayName,
         role: session.memberRole,
       },
+    };
+  }
+
+  async getPersonSession(
+    token: string,
+  ): Promise<PersonBrowserSessionResponse | undefined> {
+    const [session] = await this.database
+      .select({
+        personId: persons.id,
+        personDisplayName: persons.displayName,
+        personEmail: persons.email,
+        organizationId: organizations.id,
+        organizationName: organizations.name,
+        memberId: organizationMembers.id,
+        memberDisplayName: organizationMembers.displayName,
+        memberRole: organizationMembers.role,
+      })
+      .from(browserSessions)
+      .innerJoin(persons, eq(browserSessions.personId, persons.id))
+      .leftJoin(
+        organizationMembers,
+        eq(browserSessions.memberId, organizationMembers.id),
+      )
+      .leftJoin(
+        organizations,
+        eq(organizationMembers.organizationId, organizations.id),
+      )
+      .where(
+        and(
+          eq(browserSessions.tokenDigest, digestSessionToken(token)),
+          isNull(browserSessions.revokedAt),
+          gt(browserSessions.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+    if (!session) return undefined;
+    const hasMembership =
+      session.organizationId !== null &&
+      session.organizationName !== null &&
+      session.memberId !== null &&
+      session.memberDisplayName !== null &&
+      session.memberRole !== null;
+    return {
+      person: {
+        id: session.personId,
+        displayName: session.personDisplayName,
+        email: session.personEmail,
+      },
+      organization: hasMembership
+        ? { id: session.organizationId!, name: session.organizationName! }
+        : null,
+      member: hasMembership
+        ? {
+            id: session.memberId!,
+            displayName: session.memberDisplayName!,
+            role: session.memberRole!,
+          }
+        : null,
     };
   }
 
@@ -372,6 +469,94 @@ export class IdentityStore {
     };
   }
 
+  async createAnalysisCredentialGrant(
+    memberId: string,
+    input: AnalysisCredentialCreateRequest,
+  ): Promise<AnalysisCredentialGrantResponse | undefined> {
+    const [member] = await this.database
+      .select({ organizationId: organizationMembers.organizationId })
+      .from(organizationMembers)
+      .where(eq(organizationMembers.id, memberId))
+      .limit(1);
+    if (!member) return undefined;
+    const lookup = randomBytes(12).toString("base64url");
+    const grant = `analysis_grant_${lookup}_${randomBytes(32).toString("base64url")}`;
+    const verifierSalt = randomBytes(24).toString("base64url");
+    const verifierDigest = (await deriveVerifier(grant, verifierSalt)).toString(
+      "base64url",
+    );
+    const expiresAt = new Date(Date.now() + analysisCredentialGrantLifetimeMs);
+    await this.database.insert(analysisCredentialGrants).values({
+      organizationId: member.organizationId,
+      memberId,
+      lookup,
+      name: input.name,
+      verifierSalt,
+      verifierDigest,
+      expiresAt,
+    });
+    return { grant, expiresAt: expiresAt.toISOString() };
+  }
+
+  async redeemAnalysisCredentialGrant(
+    grant: string,
+  ): Promise<AnalysisCredentialCreateResponse> {
+    const match = analysisCredentialGrantPattern.exec(grant);
+    if (!match) {
+      throw new IdentityError(
+        "ANALYSIS_CREDENTIAL_GRANT_INVALID",
+        "The Analysis-credential grant is invalid, expired, revoked, or already used.",
+      );
+    }
+    return this.database.transaction(async (transaction) => {
+      const [credentialGrant] = await transaction
+        .select()
+        .from(analysisCredentialGrants)
+        .where(
+          and(
+            eq(analysisCredentialGrants.lookup, match[1]!),
+            isNull(analysisCredentialGrants.redeemedAt),
+            isNull(analysisCredentialGrants.revokedAt),
+            gt(analysisCredentialGrants.expiresAt, new Date()),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!credentialGrant) {
+        throw new IdentityError(
+          "ANALYSIS_CREDENTIAL_GRANT_INVALID",
+          "The Analysis-credential grant is invalid, expired, revoked, or already used.",
+        );
+      }
+      const expected = Buffer.from(credentialGrant.verifierDigest, "base64url");
+      const supplied = await deriveVerifier(grant, credentialGrant.verifierSalt);
+      if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+        throw new IdentityError(
+          "ANALYSIS_CREDENTIAL_GRANT_INVALID",
+          "The Analysis-credential grant is invalid, expired, revoked, or already used.",
+        );
+      }
+      const credential = `analysis_${randomBytes(32).toString("base64url")}`;
+      const [created] = await transaction
+        .insert(analysisCredentials)
+        .values({
+          organizationId: credentialGrant.organizationId,
+          memberId: credentialGrant.memberId,
+          name: credentialGrant.name,
+          tokenDigest: digestSessionToken(credential),
+        })
+        .returning();
+      await transaction
+        .update(analysisCredentialGrants)
+        .set({ redeemedAt: new Date() })
+        .where(eq(analysisCredentialGrants.id, credentialGrant.id));
+      return {
+        credential,
+        analysisCredential: toAnalysisCredential(created!),
+      };
+    });
+  }
+
   async listAnalysisCredentials(memberId: string): Promise<AnalysisCredential[]> {
     const rows = await this.database
       .select()
@@ -404,6 +589,9 @@ export class IdentityStore {
   ): Promise<AnalysisAuthentication | undefined> {
     const [authentication] = await this.database
       .select({
+        personId: persons.id,
+        personDisplayName: persons.displayName,
+        personEmail: persons.email,
         organizationId: organizations.id,
         organizationName: organizations.name,
         memberId: organizationMembers.id,
@@ -416,6 +604,7 @@ export class IdentityStore {
         organizationMembers,
         eq(analysisCredentials.memberId, organizationMembers.id),
       )
+      .innerJoin(persons, eq(organizationMembers.personId, persons.id))
       .innerJoin(
         organizations,
         eq(analysisCredentials.organizationId, organizations.id),
@@ -434,6 +623,11 @@ export class IdentityStore {
       .set({ lastUsedAt: now })
       .where(eq(analysisCredentials.id, authentication.credential.id));
     return {
+      person: {
+        id: authentication.personId,
+        displayName: authentication.personDisplayName,
+        email: authentication.personEmail,
+      },
       organization: {
         id: authentication.organizationId,
         name: authentication.organizationName,
@@ -476,18 +670,59 @@ export class IdentityStore {
     const expiresAt = new Date(
       Date.now() + (input.expiresInHours ?? 24) * 60 * 60 * 1_000,
     );
-    await this.database.insert(inviteCredentials).values({
+    const [created] = await this.database.insert(inviteCredentials).values({
       organizationId: administrator.organizationId,
       issuedByMemberId: administratorId,
       lookup,
       verifierSalt: salt,
       verifierDigest,
       expiresAt,
-    });
-    return { code, expiresAt: expiresAt.toISOString() };
+    }).returning({ id: inviteCredentials.id });
+    return {
+      id: created!.id,
+      code,
+      expiresAt: expiresAt.toISOString(),
+      role: "member",
+    };
   }
 
-  async redeemInviteCode(input: InviteCodeRedeemRequest): Promise<Redemption> {
+  async revokeInviteCode(
+    administratorId: string,
+    inviteId: string,
+  ): Promise<boolean> {
+    const [administrator] = await this.database
+      .select({
+        organizationId: organizationMembers.organizationId,
+        role: organizationMembers.role,
+      })
+      .from(organizationMembers)
+      .where(eq(organizationMembers.id, administratorId))
+      .limit(1);
+    if (!administrator || administrator.role !== "administrator") {
+      throw new IdentityError(
+        "ADMINISTRATOR_REQUIRED",
+        "An Administrator browser session is required.",
+      );
+    }
+    const [revoked] = await this.database
+      .update(inviteCredentials)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(inviteCredentials.id, inviteId),
+          eq(inviteCredentials.organizationId, administrator.organizationId),
+          isNull(inviteCredentials.redeemedAt),
+          isNull(inviteCredentials.revokedAt),
+        ),
+      )
+      .returning({ id: inviteCredentials.id });
+    return revoked !== undefined;
+  }
+
+  async redeemInviteCode(
+    input: InviteCodeRedeemRequest,
+    existingSessionToken?: string,
+  ): Promise<Redemption> {
     const match = inviteCodePattern.exec(input.code);
     if (!match) {
       throw new IdentityError(
@@ -497,6 +732,29 @@ export class IdentityStore {
     }
 
     return this.database.transaction(async (transaction) => {
+      const [authenticated] = existingSessionToken
+        ? await transaction
+            .select({
+              sessionId: browserSessions.id,
+              personId: persons.id,
+              displayName: persons.displayName,
+              email: persons.email,
+            })
+            .from(browserSessions)
+            .innerJoin(persons, eq(browserSessions.personId, persons.id))
+            .where(
+              and(
+                eq(
+                  browserSessions.tokenDigest,
+                  digestSessionToken(existingSessionToken),
+                ),
+                isNull(browserSessions.revokedAt),
+                gt(browserSessions.expiresAt, new Date()),
+              ),
+            )
+            .for("update")
+            .limit(1)
+        : [];
       const [credential] = await transaction
         .select()
         .from(inviteCredentials)
@@ -537,11 +795,53 @@ export class IdentityStore {
           "The Invite code is invalid, expired, revoked, or already used.",
         );
       }
+      const [existingMembership] = authenticated
+        ? await transaction
+            .select({ id: organizationMembers.id })
+            .from(organizationMembers)
+            .where(
+              and(
+                eq(organizationMembers.organizationId, credential.organizationId),
+                eq(organizationMembers.personId, authenticated.personId),
+              ),
+            )
+            .limit(1)
+        : [];
+      if (existingMembership) {
+        throw new IdentityError(
+          "INVITE_CODE_INVALID",
+          "The Invite code is invalid, expired, revoked, or already used.",
+        );
+      }
+      if (!authenticated && !input.member) {
+        throw new IdentityError(
+          "INVITE_CODE_INVALID",
+          "Sign in before redeeming this Invite code.",
+        );
+      }
+      const [createdPerson] = authenticated
+        ? []
+        : await transaction
+            .insert(persons)
+            .values({ displayName: input.member!.displayName })
+            .returning({
+              id: persons.id,
+              displayName: persons.displayName,
+              email: persons.email,
+            });
+      const person = authenticated
+        ? {
+            id: authenticated.personId,
+            displayName: authenticated.displayName,
+            email: authenticated.email,
+          }
+        : createdPerson!;
       const [member] = await transaction
         .insert(organizationMembers)
         .values({
           organizationId: credential.organizationId,
-          displayName: input.member.displayName,
+          personId: person.id,
+          displayName: person.displayName,
           role: "member",
         })
         .returning({
@@ -549,18 +849,200 @@ export class IdentityStore {
           displayName: organizationMembers.displayName,
           role: organizationMembers.role,
         });
-      const sessionToken = `session_${randomBytes(32).toString("base64url")}`;
-      await transaction.insert(browserSessions).values({
-        memberId: member!.id,
-        tokenDigest: digestSessionToken(sessionToken),
-        expiresAt: new Date(Date.now() + browserSessionLifetimeMs),
-      });
+      const sessionToken =
+        authenticated && existingSessionToken
+          ? existingSessionToken
+          : `session_${randomBytes(32).toString("base64url")}`;
+      if (authenticated) {
+        await transaction
+          .update(browserSessions)
+          .set({ memberId: member!.id })
+          .where(eq(browserSessions.id, authenticated.sessionId));
+      } else {
+        await transaction.insert(browserSessions).values({
+          personId: person.id,
+          memberId: member!.id,
+          tokenDigest: digestSessionToken(sessionToken),
+          expiresAt: new Date(Date.now() + browserSessionLifetimeMs),
+        });
+      }
       await transaction
         .update(inviteCredentials)
         .set({ redeemedAt: new Date() })
         .where(eq(inviteCredentials.id, credential.id));
-      return { organization, member: member!, sessionToken };
+      return {
+        person,
+        organization,
+        member: member!,
+        sessionToken,
+      };
     });
+  }
+
+  async selectActiveMembership(
+    sessionToken: string,
+    membershipId: string,
+  ): Promise<AuthenticatedSessionResponse | undefined> {
+    return this.database.transaction(async (transaction) => {
+      const [selected] = await transaction
+        .select({
+          sessionId: browserSessions.id,
+          personId: persons.id,
+          personDisplayName: persons.displayName,
+          personEmail: persons.email,
+          organizationId: organizations.id,
+          organizationName: organizations.name,
+          memberId: organizationMembers.id,
+          memberDisplayName: organizationMembers.displayName,
+          memberRole: organizationMembers.role,
+        })
+        .from(browserSessions)
+        .innerJoin(persons, eq(browserSessions.personId, persons.id))
+        .innerJoin(
+          organizationMembers,
+          and(
+            eq(organizationMembers.id, membershipId),
+            eq(organizationMembers.personId, browserSessions.personId),
+          ),
+        )
+        .innerJoin(
+          organizations,
+          eq(organizationMembers.organizationId, organizations.id),
+        )
+        .where(
+          and(
+            eq(browserSessions.tokenDigest, digestSessionToken(sessionToken)),
+            isNull(browserSessions.revokedAt),
+            gt(browserSessions.expiresAt, new Date()),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!selected) return undefined;
+      await transaction
+        .update(browserSessions)
+        .set({ memberId: selected.memberId })
+        .where(eq(browserSessions.id, selected.sessionId));
+      return {
+        person: {
+          id: selected.personId,
+          displayName: selected.personDisplayName,
+          email: selected.personEmail,
+        },
+        organization: {
+          id: selected.organizationId,
+          name: selected.organizationName,
+        },
+        member: {
+          id: selected.memberId,
+          displayName: selected.memberDisplayName,
+          role: selected.memberRole,
+        },
+      };
+    });
+  }
+
+  async createOrganizationForSession(
+    sessionToken: string,
+    name: string,
+  ): Promise<OrganizationMembershipCreateResponse | undefined> {
+    return this.database.transaction(async (transaction) => {
+      const [authenticated] = await transaction
+        .select({
+          sessionId: browserSessions.id,
+          id: persons.id,
+          displayName: persons.displayName,
+          email: persons.email,
+        })
+        .from(browserSessions)
+        .innerJoin(persons, eq(browserSessions.personId, persons.id))
+        .where(
+          and(
+            eq(browserSessions.tokenDigest, digestSessionToken(sessionToken)),
+            isNull(browserSessions.revokedAt),
+            gt(browserSessions.expiresAt, new Date()),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!authenticated) return undefined;
+
+      const [organization] = await transaction
+        .insert(organizations)
+        .values({ name })
+        .returning({ id: organizations.id, name: organizations.name });
+      const [member] = await transaction
+        .insert(organizationMembers)
+        .values({
+          organizationId: organization!.id,
+          personId: authenticated.id,
+          displayName: authenticated.displayName,
+          role: "administrator",
+        })
+        .returning({
+          id: organizationMembers.id,
+          displayName: organizationMembers.displayName,
+          role: organizationMembers.role,
+        });
+      await transaction
+        .update(browserSessions)
+        .set({ memberId: member!.id })
+        .where(eq(browserSessions.id, authenticated.sessionId));
+      return {
+        person: {
+          id: authenticated.id,
+          displayName: authenticated.displayName,
+          email: authenticated.email,
+        },
+        organization: organization!,
+        member: { ...member!, role: "administrator" as const },
+      };
+    });
+  }
+
+  async listPersonMemberships(
+    personId: string,
+  ): Promise<PersonMembershipsResponse | undefined> {
+    const [person] = await this.database
+      .select({
+        id: persons.id,
+        displayName: persons.displayName,
+        email: persons.email,
+      })
+      .from(persons)
+      .where(eq(persons.id, personId))
+      .limit(1);
+    if (!person) return undefined;
+    const rows = await this.database
+      .select({
+        organizationId: organizations.id,
+        organizationName: organizations.name,
+        memberId: organizationMembers.id,
+        memberDisplayName: organizationMembers.displayName,
+        memberRole: organizationMembers.role,
+      })
+      .from(organizationMembers)
+      .innerJoin(persons, eq(organizationMembers.personId, persons.id))
+      .innerJoin(
+        organizations,
+        eq(organizationMembers.organizationId, organizations.id),
+      )
+      .where(eq(organizationMembers.personId, personId))
+      .orderBy(asc(organizationMembers.createdAt));
+    return {
+      person,
+      memberships: rows.map((row) => ({
+        organization: {
+          id: row.organizationId,
+          name: row.organizationName,
+        },
+        member: {
+          id: row.memberId,
+          displayName: row.memberDisplayName,
+          role: row.memberRole,
+        },
+      })),
+    };
   }
 
   async createDeviceEnrollmentGrant(
@@ -769,18 +1251,18 @@ export class IdentityStore {
   async revokeDevice(memberId: string, deviceId: string): Promise<boolean> {
     return this.database.transaction(async (transaction) => {
       const [device] = await transaction
-        .select({ id: enrolledDevices.id })
+        .select({ id: enrolledDevices.id, revokedAt: enrolledDevices.revokedAt })
         .from(enrolledDevices)
         .where(
           and(
             eq(enrolledDevices.id, deviceId),
             eq(enrolledDevices.memberId, memberId),
-            isNull(enrolledDevices.revokedAt),
           ),
         )
         .for("update")
         .limit(1);
       if (!device) return false;
+      if (device.revokedAt) return true;
       const revokedAt = new Date();
       await transaction
         .update(deviceCredentials)
@@ -882,6 +1364,27 @@ export class IdentityStore {
     return this.database.transaction(async (transaction) => {
       const results: SourceEventBatchResult[] = [];
       for (const candidate of candidates) {
+        const batchOrdinal = results.length;
+        const retainResult = async (
+          result: SourceEventBatchResult,
+          acceptedSourceEventId?: string,
+        ) => {
+          results.push(result);
+          await transaction
+            .insert(sourceEventIngestionAttempts)
+            .values(
+              structuralAttemptFields({
+                organizationId: device.organizationId,
+                deviceId,
+                batchId,
+                batchOrdinal,
+                candidate,
+                result,
+                acceptedSourceEventId,
+              }),
+            )
+            .onConflictDoNothing();
+        };
         const eventId =
           typeof candidate === "object" &&
           candidate !== null &&
@@ -896,7 +1399,7 @@ export class IdentityStore {
             candidate !== null &&
             "schemaVersion" in candidate &&
             candidate.schemaVersion !== "1";
-          results.push({
+          await retainResult({
             eventId,
             status: "rejected",
             retryable: false,
@@ -914,7 +1417,7 @@ export class IdentityStore {
           .update(JSON.stringify(event.rawPayload))
           .digest("hex")}`;
         if (computedPayloadHash !== event.payloadHash) {
-          results.push({
+          await retainResult({
             eventId: event.id,
             status: "rejected",
             retryable: false,
@@ -952,7 +1455,10 @@ export class IdentityStore {
           .onConflictDoNothing()
           .returning({ id: sourceEvents.id });
         if (inserted.length === 1) {
-          results.push({ eventId: event.id, status: "accepted" });
+          await retainResult(
+            { eventId: event.id, status: "accepted" },
+            event.id,
+          );
           continue;
         }
         const [existing] = await transaction
@@ -977,9 +1483,12 @@ export class IdentityStore {
           existing.deduplicationKey === event.deduplicationKey &&
           existing.payloadHash === event.payloadHash
         ) {
-          results.push({ eventId: event.id, status: "duplicate" });
+          await retainResult(
+            { eventId: event.id, status: "duplicate" },
+            existing.id,
+          );
         } else {
-          results.push({
+          await retainResult({
             eventId: event.id,
             status: "rejected",
             retryable: false,

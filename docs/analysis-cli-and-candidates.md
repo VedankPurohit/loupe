@@ -16,33 +16,36 @@ in this repository.
 
 ## Create and revoke a credential
 
-Credential management is a human action authenticated by the member's browser Session. The plaintext credential is returned only on creation; PostgreSQL stores its SHA-256 digest.
+Credential management is a human action confirmed in the member's authenticated
+browser. The CLI opens the confirmation page, receives only a short-lived,
+state-bound grant at a loopback callback, redeems it once, and writes the
+plaintext credential directly to an owner-only `0600` file. It never reads the
+browser's HttpOnly Session or prints the credential; PostgreSQL stores only its
+SHA-256 digest.
 
 ```bash
-CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
-  coding-agent-analysis credential create --name "Organization analyst" \
+coding-agent-analysis credential create --name "Organization analyst" \
   --server-url http://127.0.0.1:3000 --json
 
-coding-agent-analysis credential list --json
-coding-agent-analysis credential revoke ANALYSIS_CREDENTIAL_ID
+coding-agent-analysis credential status --json
+coding-agent-analysis credential revoke --json
 ```
 
-Set the returned value for investigation commands:
+The default file is `~/.config/loupe/analysis-credential`. Use `--output PATH`
+when creating it and `--analysis-credential-file PATH` on later commands to use
+a different path. Investigation commands load the default file automatically:
 
 ```bash
 export CODING_AGENT_OBSERVABILITY_SERVER_URL=http://127.0.0.1:3000
-export CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL=analysis_REDACTED
+coding-agent-analysis search --query compilation
 ```
 
-Revocation is immediate. Later requests return the stable `ANALYSIS_CREDENTIAL_REQUIRED` envelope. Revocation does not delete accepted evidence, previously submitted Candidate versions, or reviewer history.
-
-`CODING_AGENT_OBSERVABILITY_BROWSER_SESSION` is the value of the HttpOnly `browser_session` cookie,
-not an Analysis or Device token. Treat it as a secret, keep it out of shell
-history, and unset it after credential management. Automation may instead use
-`--browser-session-file PATH` or `--analysis-credential-file PATH`; the CLI
-requires regular files with mode `0600`. Use `-` to read one credential from
-stdin. Token-valued argv flags are rejected because other local processes may
-be able to inspect command arguments.
+Revocation is immediate and also removes the selected local credential file.
+Later requests return the stable `ANALYSIS_CREDENTIAL_REQUIRED` envelope.
+Revocation does not delete accepted evidence, previously submitted Candidate
+versions, or reviewer history. Existing credential files must be regular files
+with mode `0600`; use `-` to read one credential from stdin. Token-valued argv
+flags are rejected because other local processes may inspect command arguments.
 
 Cleartext HTTP is accepted only for `localhost`, `127.0.0.1`, and `::1`.
 Every remote Analysis endpoint must use HTTPS.

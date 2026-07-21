@@ -1,6 +1,8 @@
 import swagger from "@fastify/swagger";
 import cookie from "@fastify/cookie";
+import { randomBytes } from "node:crypto";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { z } from "zod";
 import {
   jsonSchemaTransform,
   serializerCompiler,
@@ -11,8 +13,12 @@ import {
 import {
   AnalysisCredentialCreateRequestSchema,
   AnalysisCredentialCreateResponseSchema,
+  AnalysisCredentialAuthorizationQuerySchema,
+  AnalysisCredentialGrantRedeemRequestSchema,
   AnalysisCredentialIdParamsSchema,
+  AnalysisCredentialStatusResponseSchema,
   AnalysisCredentialsResponseSchema,
+  ActiveMembershipSelectionRequestSchema,
   ApiErrorSchema,
   AuthenticatedSessionResponseSchema,
   BootstrapRedeemRequestSchema,
@@ -37,6 +43,8 @@ import {
   ComparisonTurnParamsSchema,
   DeviceCapturePolicyResponseSchema,
   DeviceEnrollmentGrantRequestSchema,
+  DeviceEnrollmentAuthorizationQuerySchema,
+  DeviceDisconnectAuthorizationQuerySchema,
   DeviceEnrollmentGrantResponseSchema,
   DeviceEnrollmentRedeemRequestSchema,
   DeviceEnrollmentResponseSchema,
@@ -49,6 +57,7 @@ import {
   DeviceStandardManifestSchema,
   DeviceStandardReleaseParamsSchema,
   EnrolledDevicesResponseSchema,
+  EmptyRequestBodySchema,
   ExecutionSessionDetailResponseSchema,
   ExecutionSessionIdParamsSchema,
   ExecutionSessionsResponseSchema,
@@ -56,17 +65,24 @@ import {
   ExamplePackParamsSchema,
   HealthResponseSchema,
   InviteCodeRedeemRequestSchema,
+  InviteCodeIdParamsSchema,
   InviteCodeRequestSchema,
   InviteCodeResponseSchema,
   OrganizationActivityQuerySchema,
   OrganizationActivityResponseSchema,
+  OrganizationCreateRequestSchema,
+  OrganizationMembershipCreateResponseSchema,
   OrganizationStandardParamsSchema,
   OrganizationStandardRollbackRequestSchema,
   OrganizationStandardsResponseSchema,
   RetainedSourceEventSchema,
+  PersonMembershipsResponseSchema,
+  PersonBrowserSessionResponseSchema,
   SourceEventBatchRequestSchema,
   SourceEventBatchResponseSchema,
   SourceEventIdParamsSchema,
+  StructuralCaptureLedgerQuerySchema,
+  StructuralCaptureLedgerResponseSchema,
   SessionAnnotationRequestSchema,
   SessionAnnotationResponseSchema,
   UpdateDeviceCapturePolicyRequestSchema,
@@ -86,23 +102,82 @@ import type { VersionedPriceTable } from "@workspace/agent-adapter";
 
 import { ExecutionStore } from "./execution-store.js";
 import { CandidateError, CandidateStore } from "./candidate-store.js";
+import {
+  DeviceDiagnosticsStore,
+  registerDeviceDiagnosticsRoutes,
+} from "./device-diagnostics.js";
+import {
+  registerGoogleAuthRoutes,
+  type GoogleAuthConfiguration,
+} from "./google-auth.js";
+import { GoogleAuthError, GoogleAuthStore } from "./google-auth-store.js";
+import {
+  GoogleIdTokenError,
+  GoogleJwksIdTokenVerifier,
+  GoogleLibraryIdTokenVerifier,
+  type GoogleJwks,
+} from "./google-id-token-verifier.js";
 import { IdentityError, IdentityStore } from "./identity-store.js";
+import { StructuralCaptureLedgerStore } from "./structural-capture-ledger.js";
 
 export interface BuildAppOptions {
   bootstrapCode?: string;
   databaseUrl?: string;
   onBootstrapCode?: (code: string) => void;
   priceTable?: VersionedPriceTable;
+  googleAuth?: GoogleAuthConfiguration;
 }
 
 export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "string" },
+    (_request, body, done) => done(null, body),
+  );
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   const identityStore = databaseUrl ? new IdentityStore(databaseUrl) : undefined;
   const executionStore = databaseUrl
     ? new ExecutionStore(databaseUrl, options.priceTable)
     : undefined;
   const candidateStore = databaseUrl ? new CandidateStore(databaseUrl) : undefined;
+  const deviceDiagnosticsStore = databaseUrl
+    ? new DeviceDiagnosticsStore(databaseUrl)
+    : undefined;
+  const structuralCaptureLedgerStore = databaseUrl
+    ? new StructuralCaptureLedgerStore(databaseUrl)
+    : undefined;
+  const environmentGoogleClientId = process.env.GOOGLE_WEB_CLIENT_ID?.trim();
+  const environmentGoogleOrigins = process.env.GOOGLE_AUTH_ALLOWED_ORIGINS
+    ?.split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+  const developmentGoogleJwksUrl =
+    process.env.GOOGLE_AUTH_DEVELOPMENT_JWKS_URL?.trim();
+  const googleAuthConfiguration =
+    options.googleAuth ??
+    (environmentGoogleClientId && environmentGoogleOrigins?.length
+      ? {
+          clientId: environmentGoogleClientId,
+          allowedOrigins: environmentGoogleOrigins,
+          verifier: developmentGoogleJwksUrl
+            ? new GoogleJwksIdTokenVerifier({
+                allowedAudiences: [environmentGoogleClientId],
+                loadJwks: async () => {
+                  const response = await fetch(developmentGoogleJwksUrl, {
+                    headers: { accept: "application/json" },
+                  });
+                  if (!response.ok) throw new Error("JWKS unavailable");
+                  return (await response.json()) as GoogleJwks;
+                },
+              })
+            : new GoogleLibraryIdTokenVerifier([environmentGoogleClientId]),
+        }
+      : undefined);
+  const googleAuthStore =
+    databaseUrl && googleAuthConfiguration
+      ? new GoogleAuthStore(databaseUrl)
+      : undefined;
   const liveSequences = new Map<string, number>();
   const liveClients = new Map<string, Set<NodeJS.WritableStream>>();
 
@@ -319,6 +394,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
     transform: jsonSchemaTransform,
   });
 
+  registerDeviceDiagnosticsRoutes(app, {
+    identityStore,
+    diagnosticsStore: deviceDiagnosticsStore,
+  });
+  registerGoogleAuthRoutes(app, {
+    store: googleAuthStore,
+    configuration: googleAuthConfiguration,
+  });
+
   app.get(
     "/api/v1/health",
     {
@@ -479,6 +563,85 @@ export async function buildApp(options: BuildAppOptions = {}) {
     },
   );
 
+  app.get(
+    "/api/v1/analysis-credential",
+    {
+      schema: {
+        operationId: "getActiveAnalysisCredential",
+        security: analysisCredentialOpenApiSecurity,
+        response: {
+          200: AnalysisCredentialStatusResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = bearerToken(request);
+      const authentication = token
+        ? await identityStore.authenticateAnalysis(token)
+        : undefined;
+      if (!authentication) {
+        return reply.status(401).send({
+          error: {
+            code: "ANALYSIS_CREDENTIAL_REQUIRED",
+            message: "A valid, active Analysis credential is required.",
+          },
+        });
+      }
+      return authentication;
+    },
+  );
+
+  app.post(
+    "/api/v1/analysis-credential/revoke",
+    {
+      schema: {
+        operationId: "revokeActiveAnalysisCredential",
+        security: analysisCredentialOpenApiSecurity,
+        response: {
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = bearerToken(request);
+      const authentication = token
+        ? await identityStore.authenticateAnalysis(token)
+        : undefined;
+      if (!authentication) {
+        return reply.status(401).send({
+          error: {
+            code: "ANALYSIS_CREDENTIAL_REQUIRED",
+            message: "A valid, active Analysis credential is required.",
+          },
+        });
+      }
+      await identityStore.revokeAnalysisCredential(
+        authentication.member.id,
+        authentication.analysisCredential.id,
+      );
+      return reply.status(204).send();
+    },
+  );
+
   app.post(
     "/api/v1/invites",
     {
@@ -520,10 +683,162 @@ export async function buildApp(options: BuildAppOptions = {}) {
   );
 
   app.post(
+    "/api/v1/invites/:id/revoke",
+    {
+      schema: {
+        operationId: "revokeInviteCode",
+        security: browserSessionOpenApiSecurity,
+        params: InviteCodeIdParamsSchema,
+        response: {
+          204: AuthenticatedSessionResponseSchema.optional(),
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      if (
+        !(await identityStore.revokeInviteCode(
+          session.member.id,
+          request.params.id,
+        ))
+      ) {
+        return reply.status(404).send({
+          error: {
+            code: "INVITE_NOT_FOUND",
+            message: "The active Invite code was not found.",
+          },
+        });
+      }
+      return reply.status(204).send();
+    },
+  );
+
+  app.post(
+    "/api/v1/organizations",
+    {
+      schema: {
+        operationId: "createOrganizationMembership",
+        security: browserSessionOpenApiSecurity,
+        body: OrganizationCreateRequestSchema,
+        response: {
+          201: OrganizationMembershipCreateResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      if (!token) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const created = await identityStore.createOrganizationForSession(
+        token,
+        request.body.name,
+      );
+      if (!created) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return reply.status(201).send(created);
+    },
+  );
+
+  app.get(
+    "/api/v1/person/memberships",
+    {
+      schema: {
+        operationId: "listPersonMemberships",
+        security: browserSessionOpenApiSecurity,
+        response: {
+          200: PersonMembershipsResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token
+        ? await identityStore.getPersonSession(token)
+        : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const memberships = await identityStore.listPersonMemberships(
+        session.person.id,
+      );
+      if (!memberships) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return memberships;
+    },
+  );
+
+  app.post(
     "/api/v1/invites/redeem",
     {
       schema: {
         operationId: "redeemInviteCode",
+        security: googleAuthConfiguration
+          ? browserSessionOpenApiSecurity
+          : undefined,
         body: InviteCodeRedeemRequestSchema,
         response: {
           201: AuthenticatedSessionResponseSchema,
@@ -542,8 +857,22 @@ export async function buildApp(options: BuildAppOptions = {}) {
           },
         });
       }
+      const existingSessionToken =
+        request.cookies[browserSessionCookieName];
+      const existingSession = existingSessionToken
+        ? await identityStore.getPersonSession(existingSessionToken)
+        : undefined;
+      if (googleAuthConfiguration && !existingSession) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "Sign in before redeeming an Invite code.",
+          },
+        });
+      }
       const { sessionToken, ...session } = await identityStore.redeemInviteCode(
         request.body,
+        existingSession ? existingSessionToken : undefined,
       );
       return reply
         .setCookie(browserSessionCookieName, sessionToken, {
@@ -555,6 +884,58 @@ export async function buildApp(options: BuildAppOptions = {}) {
         })
         .status(201)
         .send(session);
+    },
+  );
+
+  app.put(
+    "/api/v1/session/active-membership",
+    {
+      schema: {
+        operationId: "selectActiveOrganizationMembership",
+        security: browserSessionOpenApiSecurity,
+        body: ActiveMembershipSelectionRequestSchema,
+        response: {
+          200: AuthenticatedSessionResponseSchema,
+          401: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const authenticated = token
+        ? await identityStore.getPersonSession(token)
+        : undefined;
+      if (!token || !authenticated) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const selected = await identityStore.selectActiveMembership(
+        token,
+        request.body.membershipId,
+      );
+      if (!selected) {
+        return reply.status(404).send({
+          error: {
+            code: "MEMBERSHIP_NOT_FOUND",
+            message: "That Organization membership is not available to this Person.",
+          },
+        });
+      }
+      return selected;
     },
   );
 
@@ -602,6 +983,408 @@ export async function buildApp(options: BuildAppOptions = {}) {
     },
   );
 
+  const escapeInstallerHtml = (value: string) =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  const parseInstallerCallback = (value: string): URL | undefined => {
+    try {
+      const callback = new URL(value);
+      const loopback =
+        callback.protocol === "http:" &&
+        (callback.hostname === "localhost" ||
+          callback.hostname === "127.0.0.1" ||
+          callback.hostname === "[::1]");
+      if (!loopback || !callback.port) return undefined;
+      return callback;
+    } catch {
+      return undefined;
+    }
+  };
+  const sendInstallerConfirmation = (
+    reply: FastifyReply,
+    input: { title: string; summary: string; action: string },
+  ) =>
+    reply
+      .type("text/html; charset=utf-8")
+      .header("cache-control", "no-store")
+      .header(
+        "content-security-policy",
+        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+      )
+      .send(`<!doctype html><meta charset="utf-8"><title>${escapeInstallerHtml(input.title)}</title>
+<style>body{font:16px system-ui;max-width:42rem;margin:10vh auto;padding:2rem}button{font:inherit;padding:.7rem 1rem}</style>
+<h1>${escapeInstallerHtml(input.title)}</h1>
+<p>${escapeInstallerHtml(input.summary)}</p>
+<form method="post"><button type="submit">${escapeInstallerHtml(input.action)}</button></form>`);
+  const sendInstallerHandoff = (
+    reply: FastifyReply,
+    input: { callback: URL; title: string; message: string; fields: Record<string, string> },
+  ) => {
+    const nonce = randomBytes(18).toString("base64url");
+    const fields = Object.entries(input.fields)
+      .map(
+        ([name, value]) =>
+          `<input type="hidden" name="${escapeInstallerHtml(name)}" value="${escapeInstallerHtml(value)}">`,
+      )
+      .join("\n  ");
+    return reply
+      .type("text/html; charset=utf-8")
+      .header("cache-control", "no-store")
+      .header(
+        "content-security-policy",
+        `default-src 'none'; script-src 'nonce-${nonce}'; form-action http://localhost:* http://127.0.0.1:* http://[::1]:*; base-uri 'none'`,
+      )
+      .send(`<!doctype html><meta charset="utf-8"><title>${escapeInstallerHtml(input.title)}</title>
+<p>${escapeInstallerHtml(input.message)}</p>
+<form id="handoff" method="post" action="${escapeInstallerHtml(input.callback.toString())}">
+  ${fields}
+</form>
+<script nonce="${nonce}">document.getElementById("handoff").submit()</script>`);
+  };
+
+  app.get(
+    "/api/v1/analysis-credential/authorize",
+    {
+      schema: {
+        operationId: "authorizeAnalysisCredentialInBrowser",
+        security: browserSessionOpenApiSecurity,
+        querystring: AnalysisCredentialAuthorizationQuerySchema,
+        response: {
+          200: z.string(),
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const callback = parseInstallerCallback(request.query.callback);
+      if (!callback) {
+        return reply.status(400).send({
+          error: {
+            code: "ANALYSIS_CALLBACK_INVALID",
+            message: "The Analysis CLI callback must be a loopback HTTP URL.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return sendInstallerConfirmation(reply, {
+        title: "Authorize Analysis credential",
+        summary: `Create ${request.query.name} for ${session.organization.name}. It can read this Organization's evidence and submit Candidates, but cannot administer Loupe.`,
+        action: "Authorize Analysis credential",
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/analysis-credential/authorize",
+    {
+      schema: {
+        operationId: "completeAnalysisCredentialAuthorizationInBrowser",
+        security: browserSessionOpenApiSecurity,
+        querystring: AnalysisCredentialAuthorizationQuerySchema,
+        response: {
+          200: z.string(),
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const callback = parseInstallerCallback(request.query.callback);
+      if (!callback) {
+        return reply.status(400).send({
+          error: {
+            code: "ANALYSIS_CALLBACK_INVALID",
+            message: "The Analysis CLI callback must be a loopback HTTP URL.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const authorization = await identityStore.createAnalysisCredentialGrant(
+        session.member.id,
+        { name: request.query.name },
+      );
+      if (!authorization) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return sendInstallerHandoff(reply, {
+        callback,
+        title: "Loupe Analysis credential authorized",
+        message: "Authorization received. You may close this tab.",
+        fields: { grant: authorization.grant, state: request.query.state },
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/analysis-credential-grants/redeem",
+    {
+      schema: {
+        operationId: "redeemAnalysisCredentialGrant",
+        body: AnalysisCredentialGrantRedeemRequestSchema,
+        response: {
+          201: AnalysisCredentialCreateResponseSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      return reply
+        .status(201)
+        .send(await identityStore.redeemAnalysisCredentialGrant(request.body.grant));
+    },
+  );
+
+  /**
+   * Browser authorization used by the packaged relay installer. The GET is a
+   * read-only confirmation page; only its same-origin POST issues a grant.
+   * The installer receives the grant at loopback and never sees the browser's
+   * HttpOnly Loupe Session cookie.
+   */
+  app.get(
+    "/api/v1/device-enrollment/authorize",
+    {
+      schema: {
+        operationId: "authorizeDeviceEnrollmentInBrowser",
+        security: browserSessionOpenApiSecurity,
+        querystring: DeviceEnrollmentAuthorizationQuerySchema,
+        response: {
+          200: z.string(),
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const callback = parseInstallerCallback(request.query.callback);
+      if (!callback) {
+        return reply.status(400).send({
+          error: {
+            code: "ENROLLMENT_CALLBACK_INVALID",
+            message: "The installer callback must be a loopback HTTP URL.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      return sendInstallerConfirmation(reply, {
+        title: "Authorize Enrolled device",
+        summary: `Enroll ${request.query.deviceName} in ${session.organization.name}. Captured Codex evidence will be visible to this Organization.`,
+        action: "Authorize Enrolled device",
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/device-enrollment/authorize",
+    {
+      schema: {
+        operationId: "completeDeviceEnrollmentAuthorizationInBrowser",
+        security: browserSessionOpenApiSecurity,
+        querystring: DeviceEnrollmentAuthorizationQuerySchema,
+        response: {
+          200: z.string(),
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const callback = parseInstallerCallback(request.query.callback);
+      if (!callback) {
+        return reply.status(400).send({
+          error: {
+            code: "ENROLLMENT_CALLBACK_INVALID",
+            message: "The installer callback must be a loopback HTTP URL.",
+          },
+        });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({
+          error: {
+            code: "BROWSER_SESSION_REQUIRED",
+            message: "An authenticated browser session is required.",
+          },
+        });
+      }
+      const { grant } = await identityStore.createDeviceEnrollmentGrant(
+        session.member.id,
+        { deviceName: request.query.deviceName },
+      );
+      return sendInstallerHandoff(reply, {
+        callback,
+        title: "Loupe device authorized",
+        message: "Authorization received. You may close this tab.",
+        fields: { grant, state: request.query.state },
+      });
+    },
+  );
+
+  app.get(
+    "/api/v1/device-disconnect/authorize",
+    {
+      schema: {
+        operationId: "authorizeDeviceDisconnectInBrowser",
+        security: browserSessionOpenApiSecurity,
+        querystring: DeviceDisconnectAuthorizationQuerySchema,
+        response: {
+          200: z.string(),
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const callback = parseInstallerCallback(request.query.callback);
+      if (!callback) {
+        return reply.status(400).send({ error: { code: "ENROLLMENT_CALLBACK_INVALID", message: "The installer callback must be a loopback HTTP URL." } });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({ error: { code: "BROWSER_SESSION_REQUIRED", message: "An authenticated browser session is required." } });
+      }
+      return sendInstallerConfirmation(reply, {
+        title: "Disconnect Enrolled device",
+        summary: `Revoke future delivery from this Enrolled device in ${session.organization.name}. Accepted history will be preserved.`,
+        action: "Disconnect Enrolled device",
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/device-disconnect/authorize",
+    {
+      schema: {
+        operationId: "completeDeviceDisconnectAuthorizationInBrowser",
+        security: browserSessionOpenApiSecurity,
+        querystring: DeviceDisconnectAuthorizationQuerySchema,
+        response: {
+          200: z.string(),
+          400: ApiErrorSchema,
+          401: ApiErrorSchema,
+          404: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({ error: { code: "DATABASE_UNAVAILABLE", message: "Database-backed identity is unavailable." } });
+      }
+      const callback = parseInstallerCallback(request.query.callback);
+      if (!callback) {
+        return reply.status(400).send({ error: { code: "ENROLLMENT_CALLBACK_INVALID", message: "The installer callback must be a loopback HTTP URL." } });
+      }
+      const token = request.cookies[browserSessionCookieName];
+      const session = token ? await identityStore.getSession(token) : undefined;
+      if (!session) {
+        return reply.status(401).send({ error: { code: "BROWSER_SESSION_REQUIRED", message: "An authenticated browser session is required." } });
+      }
+      if (!(await identityStore.revokeDevice(session.member.id, request.query.deviceId))) {
+        return reply.status(404).send({ error: { code: "ENROLLED_DEVICE_NOT_FOUND", message: "The Enrolled device was not found." } });
+      }
+      return sendInstallerHandoff(reply, {
+        callback,
+        title: "Loupe device disconnected",
+        message: "Disconnect complete. You may close this tab.",
+        fields: { state: request.query.state, status: "revoked" },
+      });
+    },
+  );
+
   app.post(
     "/api/v1/device-enrollments/redeem",
     {
@@ -628,6 +1411,44 @@ export async function buildApp(options: BuildAppOptions = {}) {
       return reply
         .status(201)
         .send(await identityStore.redeemDeviceEnrollmentGrant(request.body.grant));
+    },
+  );
+
+  app.post(
+    "/api/v1/device-connection/revoke",
+    {
+      schema: {
+        operationId: "revokeOwnDeviceConnection",
+        security: deviceCredentialOpenApiSecurity,
+        response: {
+          401: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Database-backed identity is unavailable.",
+          },
+        });
+      }
+      const credential = bearerToken(request);
+      const device = credential
+        ? await identityStore.authenticateDevice(credential)
+        : undefined;
+      if (!device) {
+        return reply.status(401).send({
+          error: {
+            code: "DEVICE_CREDENTIAL_REQUIRED",
+            message: "A valid Device credential is required.",
+          },
+        });
+      }
+      await identityStore.revokeDevice(device.memberId, device.id);
+      return reply.status(204).send();
     },
   );
 
@@ -1061,6 +1882,39 @@ export async function buildApp(options: BuildAppOptions = {}) {
     },
   );
 
+  app.get(
+    "/api/v1/structural-capture-ledger",
+    {
+      schema: {
+        operationId: "listStructuralCaptureLedger",
+        security: browserOrAnalysisOpenApiSecurity,
+        querystring: StructuralCaptureLedgerQuerySchema,
+        response: {
+          200: StructuralCaptureLedgerResponseSchema,
+          401: ApiErrorSchema,
+          403: ApiErrorSchema,
+          503: ApiErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!identityStore || !structuralCaptureLedgerStore) {
+        return reply.status(503).send({
+          error: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "The structural capture ledger is unavailable.",
+          },
+        });
+      }
+      const reader = await authenticateEvidenceReader(request, reply);
+      if (!reader) return;
+      return structuralCaptureLedgerStore.list(
+        reader.organization.id,
+        request.query,
+      );
+    },
+  );
+
   const forbiddenDeviceCapability = async (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -1327,6 +2181,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
         operationId: "importExamplePack",
         security: browserSessionOpenApiSecurity,
         params: ExamplePackParamsSchema,
+        body: EmptyRequestBodySchema,
         response: {
           200: ExamplePackImportResponseSchema,
           401: ApiErrorSchema,
@@ -2021,7 +2876,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
         operationId: "getBrowserSession",
         security: browserSessionOpenApiSecurity,
         response: {
-          200: AuthenticatedSessionResponseSchema,
+          200: PersonBrowserSessionResponseSchema,
           401: ApiErrorSchema,
           503: ApiErrorSchema,
         },
@@ -2037,7 +2892,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
         });
       }
       const token = request.cookies[browserSessionCookieName];
-      const session = token ? await identityStore.getSession(token) : undefined;
+      const session = token
+        ? await identityStore.getPersonSession(token)
+        : undefined;
       if (!session) {
         return reply.status(401).send({
           error: {
@@ -2135,6 +2992,29 @@ export async function buildApp(options: BuildAppOptions = {}) {
         error: { code: error.code, message: error.message },
       });
     }
+    if (error instanceof GoogleAuthError) {
+      const status =
+        error.code === "GOOGLE_AUTH_ORIGIN_INVALID" ||
+        error.code === "GOOGLE_AUTH_CSRF_INVALID"
+          ? 403
+          : error.code === "GOOGLE_AUTH_TRANSACTION_REPLAYED" ||
+              error.code === "GOOGLE_IDENTITY_ALREADY_LINKED" ||
+              error.code === "GOOGLE_IDENTITY_UNLINKED"
+            ? 409
+            : error.code === "GOOGLE_IDENTITY_NOT_LINKED"
+              ? 404
+              : 401;
+      return reply.status(status).send({
+        error: { code: error.code, message: error.message },
+      });
+    }
+    if (error instanceof GoogleIdTokenError) {
+      const status =
+        error.code === "GOOGLE_ID_TOKEN_VERIFICATION_UNAVAILABLE" ? 503 : 401;
+      return reply.status(status).send({
+        error: { code: error.code, message: error.message },
+      });
+    }
     if (
       error.validation ||
       error.code === "FST_ERR_CTP_INVALID_JSON_BODY" ||
@@ -2166,8 +3046,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
         identityStore.close(),
         executionStore.close(),
         candidateStore?.close(),
+        deviceDiagnosticsStore?.close(),
+        structuralCaptureLedgerStore?.close(),
+        googleAuthStore?.close(),
       ]);
     });
+    await executionStore.reprojectAllOrganizations();
   }
   await app.ready();
   if (identityStore) {

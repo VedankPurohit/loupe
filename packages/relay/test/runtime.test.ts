@@ -225,9 +225,30 @@ describe("relay capture runtime", () => {
     const eventIds = await recordSetupVerification({
       stateDir,
       sessionId: "setup-verification-test",
+      hookTrust: "trusted",
+      relayState: "running",
     });
 
     expect(eventIds).toHaveLength(2);
+    const queue = openDeliveryQueue({
+      databasePath: join(stateDir, "relay.sqlite"),
+    });
+    const acknowledgement = queue
+      .pending()
+      .find(({ event }) => event.id === eventIds[1]);
+    queue.close();
+    expect(acknowledgement?.event.rawPayload).toEqual({
+      hook_event_name: "Stop",
+      session_id: "setup-verification-test",
+      source: "setup_verification_complete",
+      canonical_kind: "installation_health",
+      diagnostics: {
+        server_endpoint: "http://127.0.0.1:3000",
+        hook_trust: "trusted",
+        relay_state: "running",
+        queue: { pending: 0, poisoned: 0 },
+      },
+    });
     expect(listActiveSessionIds({ databasePath: join(stateDir, "relay.sqlite") })).toEqual([]);
   });
 });
