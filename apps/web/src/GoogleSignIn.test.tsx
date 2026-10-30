@@ -77,3 +77,32 @@ test("uses only the public Web client ID and one-time nonce before exchanging th
   });
   expect(localStorage).toHaveLength(0);
 });
+
+test("presents an intentional one-time-code fallback when Google is not configured", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "GOOGLE_AUTH_NOT_CONFIGURED",
+            message: "Google authentication is not configured for this deployment.",
+          },
+        }),
+        { status: 503 },
+      ),
+    ),
+  );
+
+  render(<GoogleSignIn onAuthenticated={vi.fn()} />);
+
+  expect(
+    await screen.findByRole("status", { name: "Google sign-in availability" }),
+  ).toHaveTextContent("Google sign-in isn’t enabled here");
+  expect(screen.getByText(/continue with a Bootstrap or Invite code/i)).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /configure Google sign-in/i })).toHaveAttribute(
+    "href",
+    "/guide.html",
+  );
+});

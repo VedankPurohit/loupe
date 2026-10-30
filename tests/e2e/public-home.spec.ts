@@ -19,7 +19,12 @@ test("a visitor can orient on the public homepage and reach safe setup paths", a
     route.fulfill({
       status: 503,
       contentType: "application/json",
-      body: JSON.stringify({ error: { message: "Google sign-in is not configured in this browser test." } }),
+      body: JSON.stringify({
+        error: {
+          code: "GOOGLE_AUTH_NOT_CONFIGURED",
+          message: "Google sign-in is not configured in this browser test.",
+        },
+      }),
     }),
   );
 
@@ -31,9 +36,12 @@ test("a visitor can orient on the public homepage and reach safe setup paths", a
     "href",
     "https://github.com/VedankPurohit/loupe",
   );
-  await expect(page.getByRole("region", { name: /start with Google/i })).toBeVisible();
-  await expect(page.getByLabel("Google sign-in")).toBeAttached();
-  await expect(page.getByRole("link", { name: /Google sign-in setup guidance/i })).toBeVisible();
-  await page.getByRole("link", { name: /I have an Invite code/i }).click();
+  await expect(page.getByRole("region", { name: /Google or a one-time code/i })).toBeVisible();
+  await expect(page.getByLabel("Google sign-in", { exact: true })).toBeAttached();
+  await expect(page.getByRole("status", { name: "Google sign-in availability" })).toContainText(
+    "Google sign-in isn’t enabled here",
+  );
+  await expect(page.getByRole("link", { name: /configure Google sign-in/i })).toBeVisible();
+  await page.getByRole("link", { name: /Use an Invite code/i }).click();
   await expect(page.getByRole("heading", { name: "Redeem your Invite code" })).toBeVisible();
 });

@@ -21,8 +21,8 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@workspace/agent-adapter": "link:../agent-adapter",
-    "@workspace/contracts": "link:../contracts",
+    "@workspace/agent-adapter": "workspace:*",
+    "@workspace/contracts": "workspace:*",
     "@types/node": "24.0.15",
     "esbuild": "0.25.12",
     "vitest": "3.2.4"

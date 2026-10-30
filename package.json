@@ -12,6 +12,7 @@
     "build:vercel": "node scripts/build-vercel-frontend.mjs",
     "predev": "pnpm --filter @workspace/contracts build && pnpm --filter @workspace/database build",
     "dev": "concurrently -n server,web -c blue,magenta \"pnpm --filter @workspace/server dev\" \"pnpm --filter @workspace/web dev\"",
+    "demo": "node scripts/demo.mjs",
     "prototype:console": "pnpm --filter @workspace/prototype-console dev",
     "prototype:map": "pnpm --filter @workspace/prototype-map dev",
     "prototype:notebook": "pnpm --filter @workspace/prototype-notebook dev",

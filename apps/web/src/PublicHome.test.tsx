@@ -17,7 +17,15 @@ test("an unauthenticated visitor sees a useful public homepage and safe setup li
         return new Response(JSON.stringify({ required: false }), { status: 200 });
       }
       if (url.endsWith("/api/v1/auth/google/transactions")) {
-        return new Response(JSON.stringify({}), { status: 503 });
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "GOOGLE_AUTH_NOT_CONFIGURED",
+              message: "Google authentication is not configured for this deployment.",
+            },
+          }),
+          { status: 503 },
+        );
       }
       throw new Error(`Unexpected request: ${url}`);
     }),
@@ -37,7 +45,13 @@ test("an unauthenticated visitor sees a useful public homepage and safe setup li
     "href",
     "https://github.com/VedankPurohit/loupe",
   );
-  expect(screen.getByRole("heading", { name: /start with Google/i })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: /Google or a one-time code/i }),
+  ).toBeVisible();
+  expect(screen.getByRole("link", { name: /use an Invite code/i })).toBeVisible();
+  expect(
+    await screen.findByRole("status", { name: "Google sign-in availability" }),
+  ).toHaveTextContent(/Bootstrap or Invite code/i);
 });
 
 test("a revoked browser session explains the next safe action", async () => {

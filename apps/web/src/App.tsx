@@ -114,7 +114,7 @@ function PublicHome({
               inside their Organization.
             </p>
             <div className="public-actions">
-              <a className="public-primary" href="#sign-in">Continue with Google <span aria-hidden="true">↗</span></a>
+              <a className="public-primary" href="#sign-in">Choose an access path <span aria-hidden="true">↓</span></a>
               <a className="public-secondary" href="/guide.html">Read setup guidance</a>
             </div>
             <p className="public-boundary">
@@ -148,14 +148,14 @@ function PublicHome({
 
         <section id="sign-in" className="public-sign-in" aria-labelledby="sign-in-title">
           <div>
-            <p className="public-eyebrow">Begin with your identity</p>
-            <h2 id="sign-in-title">Start with Google. Choose your Organization next.</h2>
-            <p>Authentication creates a Loupe Person only. It does not grant membership automatically.</p>
+            <p className="public-eyebrow">Two explicit access paths</p>
+            <h2 id="sign-in-title">Enter with Google or a one-time code.</h2>
+            <p>Google identifies a Person. A single-use Invite code is the self-hosted fallback and judge access path.</p>
           </div>
           <div className="public-sign-in-actions">
             <GoogleSignIn onAuthenticated={onAuthenticated} />
             <a className="invite-link" href="?onboarding=invite" onClick={(event) => { event.preventDefault(); onInvite(); }}>
-              I have an Invite code →
+              Use an Invite code →
             </a>
           </div>
         </section>
@@ -790,32 +790,43 @@ export function App() {
       {membershipError && <p role="alert" className="error operation-error">{membershipError}</p>}
 
       {view.kind === "bootstrap" && (
-        <section className="card" aria-labelledby="bootstrap-title">
-          <p className="eyebrow">First-time setup</p>
-          <h1 id="bootstrap-title">Establish your Organization</h1>
-          <p className="lede">
-            Use the single-use Bootstrap code printed by the server to create the
-            first Administrator.
-          </p>
-          <GoogleSignIn onAuthenticated={googleAuthenticated} />
-          <form onSubmit={redeem}>
-            <label>
-              Organization name
-              <input name="organizationName" autoComplete="organization" required />
-            </label>
-            <label>
-              Your display name
-              <input name="displayName" autoComplete="name" required />
-            </label>
-            <label>
-              Bootstrap code
-              <input name="code" autoComplete="off" spellCheck={false} required />
-            </label>
-            {formError && <p role="alert" className="error">{formError}</p>}
-            <button type="submit" disabled={submitting}>
-              {submitting ? "Creating…" : "Create Organization"}
-            </button>
-          </form>
+        <section className="card entry-card bootstrap-card" aria-labelledby="bootstrap-title">
+          <header className="entry-intro">
+            <p className="eyebrow">First-time setup · two access paths</p>
+            <h1 id="bootstrap-title">Establish your Organization</h1>
+            <p className="lede">Choose the identity path configured for this deployment. Both paths create a real Loupe browser session.</p>
+          </header>
+          <div className="entry-paths">
+            <section className="entry-path entry-google" aria-labelledby="bootstrap-google-title">
+              <span className="entry-path-code">Path A · Google identity</span>
+              <h2 id="bootstrap-google-title">Use your Google account</h2>
+              <p>Create your Loupe Person first, then name the Organization you administer.</p>
+              <GoogleSignIn onAuthenticated={googleAuthenticated} />
+            </section>
+            <section className="entry-path entry-code" aria-labelledby="bootstrap-code-title">
+              <span className="entry-path-code">Path B · Operator fallback</span>
+              <h2 id="bootstrap-code-title">Use the server’s Bootstrap code</h2>
+              <p>The API prints one expiring, single-use code. This path needs no Google account.</p>
+              <form onSubmit={redeem}>
+                <label>
+                  Organization name
+                  <input name="organizationName" autoComplete="organization" required />
+                </label>
+                <label>
+                  Your display name
+                  <input name="displayName" autoComplete="name" required />
+                </label>
+                <label>
+                  Bootstrap code
+                  <input name="code" autoComplete="off" spellCheck={false} required />
+                </label>
+                {formError && <p role="alert" className="error">{formError}</p>}
+                <button type="submit" disabled={submitting}>
+                  {submitting ? "Creating…" : "Create Organization"}
+                </button>
+              </form>
+            </section>
+          </div>
         </section>
       )}
 
@@ -1130,25 +1141,39 @@ export function App() {
       )}
 
       {view.kind === "established" && (
-        <section className="card" aria-labelledby="invite-redeem-title">
-          <p className="eyebrow">Join the Organization</p>
-          <h1 id="invite-redeem-title">Redeem your Invite code</h1>
-          <p className="lede">An Administrator can issue an expiring, single-use code for an ordinary Member.</p>
-          <GoogleSignIn onAuthenticated={googleAuthenticated} />
-          <form onSubmit={redeemInvite}>
-            <label>
-              Your display name
-              <input name="displayName" autoComplete="name" required />
-            </label>
-            <label>
-              Invite code
-              <input name="inviteCode" autoComplete="off" spellCheck={false} required />
-            </label>
-            {formError && <p role="alert" className="error">{formError}</p>}
-            <button type="submit" disabled={submitting}>
-              {submitting ? "Joining…" : "Join Organization"}
-            </button>
-          </form>
+        <section className="card entry-card join-card" aria-labelledby="invite-redeem-title">
+          <header className="entry-intro">
+            <p className="eyebrow">Join an existing Organization</p>
+            <h1 id="invite-redeem-title">Choose how you enter Loupe</h1>
+            <p className="lede">Google is convenient. A single-use Invite code remains a complete fallback and needs no Google account.</p>
+          </header>
+          <div className="entry-paths">
+            <section className="entry-path entry-google" aria-labelledby="join-google-title">
+              <span className="entry-path-code">Path A · Google identity</span>
+              <h2 id="join-google-title">Continue with Google</h2>
+              <p>Sign in first, then select or join one of your Organizations.</p>
+              <GoogleSignIn onAuthenticated={googleAuthenticated} />
+            </section>
+            <section className="entry-path entry-code" aria-labelledby="invite-redeem-code-title">
+              <span className="entry-path-code">Path B · One-time Invite</span>
+              <h2 id="invite-redeem-code-title">Redeem your Invite code</h2>
+              <p>An Administrator issues each expiring code for one new Member.</p>
+              <form onSubmit={redeemInvite}>
+                <label>
+                  Your display name
+                  <input name="displayName" autoComplete="name" required />
+                </label>
+                <label>
+                  Invite code
+                  <input name="inviteCode" autoComplete="off" spellCheck={false} required />
+                </label>
+                {formError && <p role="alert" className="error">{formError}</p>}
+                <button type="submit" disabled={submitting}>
+                  {submitting ? "Joining…" : "Join Organization"}
+                </button>
+              </form>
+            </section>
+          </div>
         </section>
       )}
 
