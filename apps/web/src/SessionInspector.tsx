@@ -772,7 +772,10 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
   const [target, setTarget] = useState<InvestigationTarget>();
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
-  const [includeSeeded, setIncludeSeeded] = useState(parameters.get("includeSeeded") === "true");
+  const [includeSeeded, setIncludeSeeded] = useState(
+    parameters.get("includeSeeded") === "true" ||
+      import.meta.env.VITE_DEMO_MODE === "1",
+  );
   const [repositoryFilter, setRepositoryFilter] = useState(parameters.get("repository") ?? "");
   const [memberFilter, setMemberFilter] = useState(parameters.get("memberId") ?? "");
   const [appliedRepository, setAppliedRepository] = useState(parameters.get("repository") ?? "");
@@ -787,7 +790,17 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
   const [error, setError] = useState<string>();
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
   const [mutationError, setMutationError] = useState<MutationError>();
-  const selectedSessionId = useRef(parameters.get("session") ?? undefined);
+  // In demo mode, open a specific fully-populated showcase Session by default
+  // (configured by `pnpm demo`) so the first impression is rich evidence rather
+  // than the newest, possibly unannotated, Session.
+  const demoSessionId =
+    (import.meta.env.VITE_DEMO_SESSION_ID as string | undefined) || undefined;
+  const selectedSessionId = useRef(
+    parameters.get("session") ?? demoSessionId ?? undefined,
+  );
+  const initialDeepLink = useRef(
+    parameters.get("session") ?? demoSessionId ?? undefined,
+  );
   const searchRef = useRef<HTMLInputElement>(null);
   const inspectorHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -825,9 +838,29 @@ export function SessionInspector({ member }: { member: AuthenticatedSessionRespo
       const previousSelection = selectedSessionId.current;
       const selectionPreserved = Boolean(previousSelection && next.items.some(({ id }) => id === previousSelection));
       const requested = previousSelection ?? fallbackSessionId;
-      const sessionId = requested && next.items.some(({ id }) => id === requested) ? requested : next.items[0]?.id;
+      const requestedOnPage = Boolean(
+        requested && next.items.some(({ id }) => id === requested),
+      );
+      // On the pristine initial view, honor an explicit deep link (the demo
+      // showcase Session, or a shared ?session= link) even when it is not on the
+      // current activity page; openSession fetches it directly. Once the user
+      // searches, filters, paginates, or selects another Session, normal
+      // "first listed Session" selection resumes. This is stateless so it stays
+      // correct under React StrictMode's double-invoked effects.
+      const pristine =
+        !submittedQuery.trim() && !appliedRepository && !appliedMember && page === 1;
+      const honorOffPageDeepLink =
+        pristine &&
+        Boolean(initialDeepLink.current) &&
+        requested === initialDeepLink.current &&
+        !requestedOnPage;
+      const sessionId =
+        requestedOnPage || honorOffPageDeepLink ? requested : next.items[0]?.id;
       if (sessionId) {
-        await openSession(sessionId);
+        const opened = await openSession(sessionId);
+        if (!opened && honorOffPageDeepLink && next.items[0]?.id) {
+          await openSession(next.items[0].id);
+        }
       } else {
         selectedSessionId.current = undefined;
         setDetail(undefined);

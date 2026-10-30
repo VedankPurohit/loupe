@@ -56,11 +56,17 @@ function loadGoogleIdentityServices(): Promise<void> {
   return googleScriptPromise;
 }
 
-async function errorMessage(response: Response): Promise<string> {
+async function errorDetail(response: Response): Promise<{
+  code?: string;
+  message: string;
+}> {
   const body = (await response.json().catch(() => undefined)) as
-    | { error?: { message?: string } }
+    | { error?: { code?: string; message?: string } }
     | undefined;
-  return body?.error?.message ?? "Google sign-in could not be completed.";
+  return {
+    code: body?.error?.code,
+    message: body?.error?.message ?? "Google sign-in could not be completed.",
+  };
 }
 
 export function GoogleSignIn({
@@ -70,21 +76,32 @@ export function GoogleSignIn({
 }) {
   const button = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string>();
+  const [availability, setAvailability] = useState<
+    "checking" | "ready" | "unavailable"
+  >("checking");
 
   useEffect(() => {
     let active = true;
     void (async () => {
+      setError(undefined);
+      setAvailability("checking");
       const transactionResponse = await fetch(
         "/api/v1/auth/google/transactions",
         { method: "POST" },
       );
       if (!transactionResponse.ok) {
-        throw new Error(await errorMessage(transactionResponse));
+        const failure = await errorDetail(transactionResponse);
+        if (failure.code === "GOOGLE_AUTH_NOT_CONFIGURED") {
+          if (active) setAvailability("unavailable");
+          return;
+        }
+        throw new Error(failure.message);
       }
       const transaction =
         (await transactionResponse.json()) as GoogleAuthTransactionResponse;
       await loadGoogleIdentityServices();
       if (!active || !window.google || !button.current) return;
+      setAvailability("ready");
       window.google.accounts.id.initialize({
         client_id: transaction.clientId,
         nonce: transaction.nonce,
@@ -102,7 +119,7 @@ export function GoogleSignIn({
               }),
             });
             if (!sessionResponse.ok) {
-              throw new Error(await errorMessage(sessionResponse));
+              throw new Error((await errorDetail(sessionResponse)).message);
             }
             const session =
               (await sessionResponse.json()) as GoogleBrowserSessionResponse;
@@ -139,13 +156,29 @@ export function GoogleSignIn({
   }, [onAuthenticated]);
 
   return (
-    <div className="google-sign-in">
+    <div className="google-sign-in" data-availability={availability}>
       <div ref={button} aria-label="Google sign-in" />
+      {availability === "checking" && !error && (
+        <p className="google-checking" role="status">Checking Google sign-in…</p>
+      )}
+      {availability === "unavailable" && (
+        <div
+          aria-label="Google sign-in availability"
+          className="google-unavailable"
+          role="status"
+        >
+          <strong>Google sign-in isn’t enabled here.</strong>
+          <span>Continue with a Bootstrap or Invite code. No Google account is required.</span>
+          <a className="google-fallback" href="/guide.html">
+            Configure Google sign-in
+          </a>
+        </div>
+      )}
       {error && (
         <>
           <p role="alert" className="error">{error}</p>
           <a className="google-fallback" href="/guide.html">
-            Open Google sign-in setup guidance
+            Troubleshoot Google sign-in
           </a>
         </>
       )}

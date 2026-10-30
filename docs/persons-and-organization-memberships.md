@@ -39,8 +39,10 @@ code with `POST /api/v1/invites` and may revoke it with
 `POST /api/v1/invites/:id/revoke`. An already authenticated Person redeems it at
 `POST /api/v1/invites/redeem`; the Person's authenticated profile supplies the
 membership display name and the browser Session activates the admitted
-membership. The legacy local Invite-code redemption shape remains accepted when
-Google is not configured, preserving the bootstrap/operator compatibility seam.
+membership. The local Invite-code redemption shape also admits an unauthenticated
+Person when Google is configured or unavailable: the high-entropy, single-use
+Invite itself is the admission proof, and redemption creates a Person, ordinary
+Member membership, and browser Session. It never grants Administrator access.
 
 When Google authentication is not configured, the one-time Bootstrap-code flow
 remains the local/operator recovery and first-Organization path. Existing

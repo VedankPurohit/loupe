@@ -1203,7 +1203,15 @@ export class ExecutionStore {
         ),
       )
       .where(and(...conditions))
-      .orderBy(desc(executionSessions.lastObservedAt), asc(executionSessions.canonicalSessionId));
+      // Surface Sessions with a determined outcome (successful, partial, failed)
+      // ahead of those whose outcome is unknown or not yet annotated, then most
+      // recent first. This keeps the most informative evidence at the top of the
+      // feed; aggregates below are computed over every row regardless of order.
+      .orderBy(
+        sql`case when coalesce(${sessionAnnotations.outcome}, 'unknown') = 'unknown' then 1 else 0 end`,
+        desc(executionSessions.lastObservedAt),
+        asc(executionSessions.canonicalSessionId),
+      );
 
     const activityStates = { live: 0, idle: 0, resumed: 0 };
     const outcomes = { successful: 0, partial: 0, failed: 0, unknown: 0 };

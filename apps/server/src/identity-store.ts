@@ -318,6 +318,66 @@ export class IdentityStore {
     });
   }
 
+  /**
+   * Mint a browser session for the Organization's first Administrator without
+   * any credential exchange. This exists solely for the hard-gated developer
+   * demo mode (see the `/api/v1/dev/demo-login` route, which is only registered
+   * when `DEMO_MODE` is set and `NODE_ENV` is not `production`). It creates no
+   * Organization, Person, or membership; it only reuses an Administrator that
+   * the real Bootstrap flow already established.
+   */
+  async createDemoAdministratorSession(): Promise<Redemption | undefined> {
+    return this.database.transaction(async (transaction) => {
+      const [member] = await transaction
+        .select({
+          memberId: organizationMembers.id,
+          memberDisplayName: organizationMembers.displayName,
+          memberRole: organizationMembers.role,
+          personId: persons.id,
+          personDisplayName: persons.displayName,
+          personEmail: persons.email,
+          organizationId: organizations.id,
+          organizationName: organizations.name,
+        })
+        .from(organizationMembers)
+        .innerJoin(persons, eq(organizationMembers.personId, persons.id))
+        .innerJoin(
+          organizations,
+          eq(organizationMembers.organizationId, organizations.id),
+        )
+        .where(eq(organizationMembers.role, "administrator"))
+        .orderBy(asc(organizationMembers.createdAt))
+        .limit(1);
+      if (!member) return undefined;
+
+      const sessionToken = `session_${randomBytes(32).toString("base64url")}`;
+      await transaction.insert(browserSessions).values({
+        personId: member.personId,
+        memberId: member.memberId,
+        tokenDigest: digestSessionToken(sessionToken),
+        expiresAt: new Date(Date.now() + browserSessionLifetimeMs),
+      });
+
+      return {
+        person: {
+          id: member.personId,
+          displayName: member.personDisplayName,
+          email: member.personEmail,
+        },
+        organization: {
+          id: member.organizationId,
+          name: member.organizationName,
+        },
+        member: {
+          id: member.memberId,
+          displayName: member.memberDisplayName,
+          role: member.memberRole,
+        },
+        sessionToken,
+      };
+    });
+  }
+
   async getSession(
     token: string,
   ): Promise<AuthenticatedSessionResponse | undefined> {

@@ -126,6 +126,14 @@ export interface BuildAppOptions {
   onBootstrapCode?: (code: string) => void;
   priceTable?: VersionedPriceTable;
   googleAuth?: GoogleAuthConfiguration;
+  /**
+   * Enables the hard-gated developer demo mode. When true (and `NODE_ENV` is
+   * not `production`) a single unauthenticated route, `/api/v1/dev/demo-login`,
+   * is registered so the seeded demo Organization opens already signed in.
+   * Defaults to `process.env.DEMO_MODE === "1"`. It is impossible to enable in
+   * production regardless of this value.
+   */
+  demoMode?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -178,6 +186,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
     databaseUrl && googleAuthConfiguration
       ? new GoogleAuthStore(databaseUrl)
       : undefined;
+  // Developer demo mode: only ever enabled outside production. This is the sole
+  // gate for the unauthenticated `/api/v1/dev/demo-login` auto-login route.
+  const demoModeEnabled =
+    (options.demoMode ?? process.env.DEMO_MODE === "1") &&
+    process.env.NODE_ENV !== "production";
   const liveSequences = new Map<string, number>();
   const liveClients = new Map<string, Set<NodeJS.WritableStream>>();
 
@@ -836,9 +849,6 @@ export async function buildApp(options: BuildAppOptions = {}) {
     {
       schema: {
         operationId: "redeemInviteCode",
-        security: googleAuthConfiguration
-          ? browserSessionOpenApiSecurity
-          : undefined,
         body: InviteCodeRedeemRequestSchema,
         response: {
           201: AuthenticatedSessionResponseSchema,
@@ -862,14 +872,6 @@ export async function buildApp(options: BuildAppOptions = {}) {
       const existingSession = existingSessionToken
         ? await identityStore.getPersonSession(existingSessionToken)
         : undefined;
-      if (googleAuthConfiguration && !existingSession) {
-        return reply.status(401).send({
-          error: {
-            code: "BROWSER_SESSION_REQUIRED",
-            message: "Sign in before redeeming an Invite code.",
-          },
-        });
-      }
       const { sessionToken, ...session } = await identityStore.redeemInviteCode(
         request.body,
         existingSession ? existingSessionToken : undefined,
@@ -2868,6 +2870,43 @@ export async function buildApp(options: BuildAppOptions = {}) {
         .send(session);
     },
   );
+
+  // Hard-gated developer demo auto-login. Registered only when demo mode is
+  // enabled and NODE_ENV is not production, so it does not exist at all in a
+  // real deployment. It mints a browser Session for the seeded Organization's
+  // Administrator and redirects to the web application, which then loads
+  // already signed in. It creates no Organization, Person, or membership.
+  if (demoModeEnabled && identityStore) {
+    const demoWebUrl = process.env.DEMO_WEB_URL ?? "http://127.0.0.1:5173/";
+    app.get(
+      "/api/v1/dev/demo-login",
+      { schema: { hide: true } },
+      async (_request, reply) => {
+        if (process.env.NODE_ENV === "production") {
+          return reply.status(404).send({
+            error: { code: "NOT_FOUND", message: "Not found." },
+          });
+        }
+        const demoSession = await identityStore.createDemoAdministratorSession();
+        if (!demoSession) {
+          // No Organization has been bootstrapped yet: fall through to the
+          // normal first-run flow instead of minting a session.
+          return reply.status(302).header("location", demoWebUrl).send();
+        }
+        return reply
+          .setCookie(browserSessionCookieName, demoSession.sessionToken, {
+            httpOnly: true,
+            maxAge: 7 * 24 * 60 * 60,
+            path: "/",
+            sameSite: "lax",
+            secure: process.env.NODE_ENV === "production",
+          })
+          .status(302)
+          .header("location", demoWebUrl)
+          .send();
+      },
+    );
+  }
 
   app.get(
     "/api/v1/session",

@@ -13,22 +13,39 @@ Loupe is runnable natively with local PostgreSQL or as a packaged Docker Compose
 
 The implementation remains a Build Week prototype with explicit capability limits. Read [Architecture and data model](docs/architecture-and-data-model.md#known-limitations) before treating any inferred or unavailable field as observed evidence.
 
-## Docker Compose quickstart
+> [!NOTE]
+> If an agent is setting this up, make sure to debug if something breaks — inspect the actual error, find the root cause, and fix it rather than working around it.
 
-With Docker Engine and the Compose v2 plugin installed:
+## Just want to try it? (recommended for a first look)
+
+The fastest way to see Loupe is demo mode. It needs no Google credentials, no Bootstrap code, and no forms: it seeds a fake Organization with example data and opens the application already signed in.
+
+Prerequisites: Node.js 22 (22.22.3 or newer), pnpm 10.28.2, and a local PostgreSQL 16 or newer accepting local connections.
+
+From the repository root:
 
 ```bash
-docker compose up --build --wait
-docker compose logs app
+pnpm install --frozen-lockfile
+pnpm demo
 ```
 
-The first command starts the production web application, API, and PostgreSQL with health checks. The second shows the one-time Bootstrap code. Open `http://127.0.0.1:8080`; the API is at `http://127.0.0.1:3000`. PostgreSQL data persists in the `postgres-data` named volume across `docker compose down` and restart. `docker compose down --volumes` is an intentional destructive reset.
+`pnpm demo` resets a dedicated, disposable `agent_observer_demo` database (fresh on every run), starts the server and web application, creates a seeded **"OpenAI"** Organization with an Administrator, imports both bundled Example packs (`starter-v1` and `rich-v1`), and opens your browser already authenticated as that Administrator. Press Control-C to stop; the demo database is recreated the next time you run it.
 
-See the [Operator guide](docs/operator-guide.md) for configuration, upgrades, backup/restore, bootstrap, capture setup, Analysis, standard synchronization, and troubleshooting.
+The seeded Sessions are clearly labelled **Seeded** examples. Loupe normally excludes them from Organization activity until you tick the **"Include clearly labelled Seeded examples"** toggle, but demo mode enables that view for you so the roughly 480 example Sessions are visible immediately. Untick the toggle to see the empty state a fresh Organization starts from.
 
-## Native development quickstart
+> [!IMPORTANT]
+> Demo mode is a local evaluation convenience, not a development or production path. Its one-click sign-in route (`GET /api/v1/dev/demo-login`) is registered only when `DEMO_MODE=1` and `NODE_ENV` is not `production`, so it cannot exist in a real deployment. For actual development use the Developer quickstart below; for a packaged deployment use Docker Compose.
 
-The native flow uses locally installed PostgreSQL; Docker is neither required nor used.
+### Seeding your own Organization and history
+
+Demo mode reuses building blocks you can drive yourself:
+
+- The **Example packs** are the bundled fake history. `starter-v1` is a tiny compilation Session; `rich-v1` is a large synthetic corpus (roughly 480 Sessions across 12 example members). Any Administrator can import them at any time with `POST /api/v1/administration/example-packs/starter-v1/import` (or `rich-v1`), or via the Analysis CLI: `coding-agent-analysis examples import rich-v1`. Imports are idempotent per Organization and version.
+- To seed an Organization named something other than "OpenAI", run the normal Bootstrap flow (see the Developer quickstart) with any Organization and administrator name, then import the Example packs above.
+
+## Developer quickstart
+
+The developer path runs Loupe natively against a locally installed PostgreSQL. Use it when you are building on Loupe rather than just trying it out; it needs no Docker.
 
 Prerequisites:
 
@@ -45,7 +62,7 @@ export DATABASE_URL=postgresql://localhost/agent_observer_dev
 pnpm dev
 ```
 
-The server runs all pending migrations, starts at `http://127.0.0.1:3000`, and prints a high-entropy, single-use Bootstrap code on the first startup of an empty database. The Vite application starts at `http://127.0.0.1:5173`. Open it, enter the printed code, an Organization name, and your display name. Successful redemption creates the one Organization, its first Administrator, and an HttpOnly browser Session.
+The server runs all pending migrations, starts at `http://127.0.0.1:3000`, and prints a high-entropy, single-use Bootstrap code on the first startup of an empty database. The Vite application starts at `http://127.0.0.1:5173`. Open it, enter the printed code, an Organization name, and your display name. Successful redemption creates the first Organization, its first Administrator, and an HttpOnly browser Session. A Person can later create or join additional Organizations and switch their active membership from the application.
 
 The random Bootstrap code is shown only when its verifier is first created and expires after 24 hours. Redeem it before discarding the server output. If it expires before redemption, stop and restart the server: startup retires the expired verifier and prints one new single-use code. The expired code remains unusable. In a multi-process deployment, only the process that creates the replacement prints it, so retain that process's startup output.
 
@@ -56,6 +73,19 @@ To stop development, press Control-C. To remove the disposable development datab
 ```bash
 dropdb agent_observer_dev
 ```
+
+## Docker Compose quickstart (alternative)
+
+If you prefer a packaged deployment, Loupe also ships a Docker Compose stack. With Docker Engine and the Compose v2 plugin installed:
+
+```bash
+docker compose up --build --wait
+docker compose logs app
+```
+
+The first command starts the production web application, API, and PostgreSQL with health checks. The second shows the one-time Bootstrap code. Open `http://127.0.0.1:8080`; the API is at `http://127.0.0.1:3000`. PostgreSQL data persists in the `postgres-data` named volume across `docker compose down` and restart. `docker compose down --volumes` is an intentional destructive reset.
+
+See the [Operator guide](docs/operator-guide.md) for configuration, upgrades, backup/restore, bootstrap, capture setup, Analysis, standard synchronization, and troubleshooting.
 
 ## Architecture
 
@@ -71,7 +101,7 @@ The pnpm workspace keeps public contracts and persistence boundaries explicit:
 | `apps/diagnostic-cli` | Human and structured Analysis CLI for evidence, citations, and Candidate submission |
 | `skills/analyze-organization-evidence` | Companion Analysis skill enforcing evidence and uncertainty rules |
 
-One deployment represents exactly one Organization. The initial migration enforces that boundary while retaining Organization identifiers as a future migration seam. Bootstrap credentials use a random salt and scrypt verifier; browser session tokens are also persisted only as digests. Database contents do not contain a redeemable Bootstrap code or browser token.
+One deployment can serve multiple Organizations. A Person may have one membership per Organization; browser, Device, and Analysis authority remains scoped to the active membership and never crosses Organization boundaries. Bootstrap credentials use a random salt and scrypt verifier; browser session tokens are also persisted only as digests. Database contents do not contain a redeemable Bootstrap code or browser token.
 
 The full capture, projection, query, and standards-distribution flow plus the table-level domain map are documented in [Architecture and data model](docs/architecture-and-data-model.md).
 
@@ -197,6 +227,7 @@ pnpm test:compose
 - [`DEMO.md`](./DEMO.md) — the real Build Week demonstration contract.
 - [`CONTEXT.md`](./CONTEXT.md) — the shared domain glossary.
 - [`docs/operator-guide.md`](./docs/operator-guide.md) — native and Compose operation, configuration, upgrades, backup/restore, bootstrap, capture, Analysis, synchronization, and troubleshooting.
+- [`JUDGING.md`](./JUDGING.md) — concise local judge setup and walkthrough, including Google-optional Invite entry and the rich Example pack.
 - [`docs/architecture-and-data-model.md`](./docs/architecture-and-data-model.md) — runtime architecture, PostgreSQL model, evidence states, credential scopes, security boundaries, and known limitations.
 - [`docs/enrollment-and-redaction.md`](./docs/enrollment-and-redaction.md) — enrollment grants, credential scopes, device Settings, revocation, and ordinary/Demo redaction behavior.
 - [`docs/adapter-and-delivery.md`](./docs/adapter-and-delivery.md) — Codex adapter capabilities, immutable source-event envelopes, durable queueing, batch acknowledgements, retries, replay, and delivery troubleshooting.

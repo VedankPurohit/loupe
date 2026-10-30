@@ -127,22 +127,20 @@ describe.sequential("Organization membership selection through /api/v1", () => {
     expect(session.json()).toMatchObject({ organization: null, member: null });
   });
 
-  it("documents Invite redemption as browser-session secured when Google authentication is configured", async () => {
+  it("documents Invite redemption as a one-time-code fallback when Google authentication is configured", async () => {
     const description = await app.inject({
       method: "GET",
       url: "/api/v1/openapi.json",
     });
 
     expect(description.statusCode).toBe(200);
-    expect(description.json()).toMatchObject({
-      paths: {
-        "/api/v1/invites/redeem": {
-          post: {
-            security: [{ browserSession: [] }],
-            responses: { "201": {}, "400": {}, "401": {}, "503": {} },
-          },
-        },
-      },
+    const operation = description.json().paths["/api/v1/invites/redeem"].post;
+    expect(operation).not.toHaveProperty("security");
+    expect(operation.responses).toMatchObject({
+      "201": {},
+      "400": {},
+      "401": {},
+      "503": {},
     });
   });
 
@@ -220,20 +218,21 @@ describe.sequential("Organization membership selection through /api/v1", () => {
       headers: { cookie: administrator.cookie },
       payload: {},
     });
-    const invalidCookie = "browser_session=attacker-chosen-token";
-    const unauthenticatedRedemption = await app.inject({
+    const fallbackRedemption = await app.inject({
       method: "POST",
       url: "/api/v1/invites/redeem",
-      headers: { cookie: invalidCookie },
       payload: {
         code: configuredDeploymentInvite.json().code,
-        member: { displayName: "Legacy Local Person" },
+        member: { displayName: "Judge Fallback Person" },
       },
     });
-    expect(unauthenticatedRedemption.statusCode).toBe(401);
-    expect(unauthenticatedRedemption.json().error.code).toBe(
-      "BROWSER_SESSION_REQUIRED",
-    );
+    expect(fallbackRedemption.statusCode).toBe(201);
+    expect(fallbackRedemption.json()).toMatchObject({
+      organization: { id: organization.json().organization.id },
+      person: { displayName: "Judge Fallback Person", email: null },
+      member: { displayName: "Judge Fallback Person", role: "member" },
+    });
+    expect(fallbackRedemption.headers["set-cookie"]).toContain("browser_session=");
   });
 
   it("switches only to a server-proven own membership and keeps roles independent", async () => {
