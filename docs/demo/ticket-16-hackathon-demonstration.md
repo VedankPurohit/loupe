@@ -127,12 +127,11 @@ or the canary into a committed file.
 ```bash
 APP_PORT=3316 WEB_PORT=8116 docker compose --project-name loupe-ticket16 up --build --wait
 pnpm --filter @workspace/relay build
-pnpm --filter @workspace/relay pack --pack-destination /tmp/loupe-relay-package
-LOUPE_RELAY_PACKAGE=/tmp/loupe-relay-package/workspace-relay-0.1.0.tgz
-pnpm dlx "$LOUPE_RELAY_PACKAGE" setup --server-url http://127.0.0.1:3316 --yes
+node packages/relay/dist/cli.js setup --server-url http://127.0.0.1:3316
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" node packages/relay/dist/cli.js setup --server-url http://127.0.0.1:3316 --yes
 npx -y @openai/codex@0.144.5 exec --json --dangerously-bypass-hook-trust "<harmless demo prompt>"
 SERVER_URL=http://127.0.0.1:3316 WEB_URL=http://127.0.0.1:8116 SESSION_ID="$SESSION_ID" BROWSER_SESSION="$BROWSER_SESSION" scripts/first-day-checkpoint.sh
 pnpm --filter @workspace/relay test -- runtime.test.ts
-pnpm dlx "$LOUPE_RELAY_PACKAGE" uninstall
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" node packages/relay/dist/cli.js uninstall
 docker compose --project-name loupe-ticket16 down --volumes --remove-orphans
 ```

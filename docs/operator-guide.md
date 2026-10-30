@@ -210,29 +210,29 @@ full role, ownership, redaction, and revocation contract.
 
 ## Codex setup, disconnect, and uninstall
 
-The supported capture target is macOS with Codex `0.144.5`. Use the packaged
-relay tarball, which contains a bundled executable and needs no repository
-symlink. The command prints the preview before browser authorization and apply:
+The supported capture target is macOS with Codex `0.144.5`. Build the relay,
+preview every change, then explicitly apply it:
 
 ```bash
-LOUPE_RELAY_PACKAGE=/absolute/path/to/workspace-relay-0.1.0.tgz
-pnpm dlx "$LOUPE_RELAY_PACKAGE" setup \
+pnpm --filter @workspace/relay build
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js setup \
+  --server-url http://127.0.0.1:3000 \
+  --device-name "Development Mac"
+
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js setup \
   --server-url http://127.0.0.1:3000 \
   --device-name "Development Mac" \
   --yes
 ```
-
-The browser uses its own HttpOnly Loupe Session to show the active Organization
-and ask for confirmation. The installer receives only a short-lived,
-single-use grant over a state-bound loopback callback. It never requests or
-reads the browser cookie.
 
 Normal Codex Sessions are captured after setup; no per-Session wrapper is used.
 Check the per-user `launchd` service and durable queue without exposing the
 Device credential:
 
 ```bash
-pnpm dlx "$LOUPE_RELAY_PACKAGE" status
+node packages/relay/dist/cli.js status
 launchctl print "gui/$(id -u)/org.coding-agent-observability.relay"
 ```
 
@@ -241,8 +241,10 @@ and local state available. Uninstall removes the service and queue and restores
 the exact pre-setup Codex file bytes. Both preserve accepted server history:
 
 ```bash
-pnpm dlx "$LOUPE_RELAY_PACKAGE" disconnect
-pnpm dlx "$LOUPE_RELAY_PACKAGE" uninstall
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js disconnect
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js uninstall
 ```
 
 Read [macOS Codex capture setup](macos-codex-setup.md) before using non-default

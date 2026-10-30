@@ -6,12 +6,7 @@ const serverPort = process.env.TEST_SERVER_PORT ?? "3000";
 export default defineConfig({
   testDir: "./tests/e2e",
   globalTeardown: "./tests/e2e/global-teardown.ts",
-  // The harness provisions exactly one server and one bootstrap-once database
-  // (tests/e2e/start-test-system.ts), so specs share global state. fullyParallel
-  // only serializes within a file; a single worker serializes across files too,
-  // preventing cross-spec Organization/bootstrap collisions.
   fullyParallel: false,
-  workers: 1,
   retries: 0,
   reporter: "list",
   use: {

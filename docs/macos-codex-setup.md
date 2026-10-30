@@ -9,9 +9,10 @@ the existing Device-enrollment API, and installs the relay as a per-user
 
 - macOS with Codex `0.144.5`, Node.js `22.22.3` or later in the Node 22 line,
   pnpm `10.28.2`, and the Loupe server running.
-- An authenticated Loupe browser Session for the Organization member who will
-  own the Enrolled device. The installer opens the browser authorization page;
-  it never requests, reads, or stores the HttpOnly `browser_session` value.
+- An authenticated browser Session for the Organization member who will own the
+  Enrolled device. Keep the HttpOnly `browser_session` value out of command
+  arguments, shell history, and repositories. Use a `0600` file, stdin, or the
+  documented environment variable.
 - Captured prompts, hook payloads, and telemetry are Organization-visible to all
   Organization members.
 - Ordinary high-confidence secret redaction is enabled by default. It is
@@ -20,30 +21,31 @@ the existing Device-enrollment API, and installs the relay as a per-user
 - Setup previews the server URL, all affected files, capture visibility,
   redaction defaults, and service installation before it changes anything.
 
-Use the packaged relay artifact supplied with the Loupe release. A maintainer
-can produce the same tarball with `pnpm --filter @workspace/relay build` and
-`pnpm --filter @workspace/relay pack`. Set its local path once, then run the
-single packaged setup entry point:
+Build the relay CLI, then preview setup:
 
 ```bash
-LOUPE_RELAY_PACKAGE=/absolute/path/to/workspace-relay-0.1.0.tgz
-pnpm dlx "$LOUPE_RELAY_PACKAGE" setup \
+pnpm --filter @workspace/relay build
+node packages/relay/dist/cli.js setup \
+  --server-url http://127.0.0.1:3000 \
+  --device-name "Development Mac"
+```
+
+The preview does not modify `CODEX_HOME` (default `~/.codex`), the relay state
+directory, or `~/Library/LaunchAgents`. Review it, then repeat with `--yes` to
+give consent and apply:
+
+```bash
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js setup \
   --server-url http://127.0.0.1:3000 \
   --device-name "Development Mac" \
   --yes
 ```
 
-The command prints its complete preview before applying. Omit `--yes` to stop
-after that read-only preview. With `--yes`, the same invocation continues into
-browser authorization and installation. It copies its bundled runtime into the
-private relay state directory; hooks and `launchd` never point at a repository
-checkout, package-manager symlink, or temporary download cache.
-
-The setup command opens a browser page on the configured Loupe server. After
-the operator confirms the active Organization, the page posts a short-lived,
-single-use Device enrollment grant to a random loopback callback owned by the
-installer. The grant is redeemed immediately and is never written to shell
-arguments or logs. Cleartext HTTP is permitted only for
+For repeatable automation, write the browser Session to a regular file with
+mode `0600` and pass `--browser-session-file PATH`; use
+`--browser-session-file -` for stdin. The former token-valued flag is rejected
+because process arguments may be visible. Cleartext HTTP is permitted only for
 `localhost`, `127.0.0.1`, and `::1`; remote servers must use HTTPS.
 
 For an isolated test, add `--codex-home /tmp/codex-home` and
@@ -67,7 +69,7 @@ The plist uses `RunAtLoad` and `KeepAlive`, so the relay starts at login and
 local status without displaying the Device credential:
 
 ```bash
-pnpm dlx "$LOUPE_RELAY_PACKAGE" status
+node packages/relay/dist/cli.js status
 launchctl print "gui/$(id -u)/org.coding-agent-observability.relay"
 ```
 
@@ -88,7 +90,8 @@ Disconnect revokes the Device credential through the browser-authorized API and
 stops the relay. It does not delete already accepted PostgreSQL history:
 
 ```bash
-pnpm dlx "$LOUPE_RELAY_PACKAGE" disconnect
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js disconnect
 ```
 
 Uninstall first disconnects if necessary, unloads and removes the per-user
@@ -96,7 +99,8 @@ service, restores the exact prior Codex configuration/hook bytes, and removes
 the relay state/SQLite queue. It also preserves server history:
 
 ```bash
-pnpm dlx "$LOUPE_RELAY_PACKAGE" uninstall
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION="$BROWSER_SESSION" \
+  node packages/relay/dist/cli.js uninstall
 ```
 
 If either managed Codex file changed after setup, uninstall validates both
@@ -139,14 +143,7 @@ fixture.
 
 - `ENROLLMENT_*`: verify the server URL and browser Session, then preview again.
 - `SETUP_VERIFICATION_FAILED`: inspect relay stderr and `/api/v1/health`; the
-  installer revokes the new credential and restores local configuration before
-  returning the failure.
-- `SETUP_CONFIG_CHANGED` or `SETUP_HOOK_TRUST_REQUIRED`: the idempotent setup
-  check found modified files or an exact hook set that Codex no longer reports
-  as enabled and trusted/managed. Reconcile that trust state before retrying.
-- `SETUP_ROLLBACK_FAILED`: local or server rollback also failed; follow the
-  named failure before retrying so an orphaned credential cannot be mistaken
-  for a completed installation.
+  local event remains durable for retry.
 - `DELIVERY_HTTP_401` or `DEVICE_DISCONNECTED`: the Device credential was
   revoked; re-enroll explicitly rather than copying another credential.
 - `EADDRINUSE` on port 4318: another OTLP receiver is configured. Setup rejects

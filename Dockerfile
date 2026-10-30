@@ -11,13 +11,13 @@ COPY apps/web/package.json apps/web/tsconfig.json apps/web/vite.config.ts apps/w
 COPY packages/agent-adapter/package.json packages/agent-adapter/tsconfig.json packages/agent-adapter/tsconfig.build.json packages/agent-adapter/
 COPY packages/contracts/package.json packages/contracts/tsconfig.json packages/contracts/tsconfig.build.json packages/contracts/
 COPY packages/database/package.json packages/database/tsconfig.json packages/database/tsconfig.build.json packages/database/
+COPY packages/relay/package.json packages/relay/tsconfig.json packages/relay/tsconfig.build.json packages/relay/
 RUN pnpm install --frozen-lockfile \
   --filter @workspace/server... \
   --filter @workspace/web...
 
 COPY apps/server/src apps/server/src
 COPY apps/web/index.html apps/web/index.html
-COPY apps/web/public apps/web/public
 COPY apps/web/src apps/web/src
 COPY packages/agent-adapter/src packages/agent-adapter/src
 COPY packages/contracts/src packages/contracts/src

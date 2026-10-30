@@ -6,24 +6,22 @@ Candidate skills. It does not connect to PostgreSQL or import server code.
 
 ## Run it
 
-Build the package, then create a revocable Analysis credential through the
-authenticated browser confirmation. The CLI receives a short-lived loopback
-grant and writes the credential to an owner-only file; it does not read or copy
-the browser Session.
+Build the package, create a revocable Analysis credential using an authenticated
+browser Session, then keep the returned bearer value in the environment.
 
 ```bash
 pnpm --filter @workspace/diagnostic-cli build
-pnpm --filter @workspace/diagnostic-cli diagnostic credential create \
+CODING_AGENT_OBSERVABILITY_BROWSER_SESSION='<browser-session>' \
+  pnpm --filter @workspace/diagnostic-cli diagnostic credential create \
   --name "Organization analyst" --json
 CODING_AGENT_OBSERVABILITY_SERVER_URL=http://127.0.0.1:3000 \
+  CODING_AGENT_OBSERVABILITY_ANALYSIS_CREDENTIAL='<analysis-credential>' \
   pnpm --filter @workspace/diagnostic-cli diagnostic inspect '<session-id>'
 ```
 
-`credential status` identifies the Organization and active credential without
-printing its secret. `credential revoke` self-revokes the active credential and
-removes its local file. Browser Sessions remain accepted only for Administrator
-Example-data imports. A Device credential is intentionally not accepted for
-Organization evidence or Candidate submission.
+Browser Sessions are used only to create, list, or revoke the member's Analysis
+credentials and to import Administrator Example data. A Device credential is
+intentionally not accepted for Organization evidence or Candidate submission.
 
 For isolated development without installing the package bin, run the source
 entry point directly:
@@ -33,10 +31,9 @@ pnpm --filter @workspace/diagnostic-cli exec tsx src/cli.ts inspect '<session-id
   --server-url http://127.0.0.1:3000
 ```
 
-The default Analysis credential file is
-`~/.config/loupe/analysis-credential`; use `--output PATH` at creation and
-`--analysis-credential-file PATH` later to select another owner-only `0600`
-file. Pass `-` to read an existing credential from stdin.
+For file-based automation, store either credential in a regular file with mode
+`0600` and use `--analysis-credential-file PATH` or
+`--browser-session-file PATH`; pass `-` to read one credential from stdin.
 Token-valued legacy flags are rejected because process arguments may be visible.
 Non-loopback server URLs must use HTTPS.
 
