@@ -3,14 +3,14 @@ import { createHash, randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import {
   chmod,
-  copyFile,
   mkdir,
   readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+
+import { browserSessionCookieName } from "@workspace/contracts";
 
 export const lifecycleEvents = [
   "SessionStart",
@@ -57,7 +57,7 @@ export interface MacosSetupPreview {
   relayCliPath: string;
   hookCommand: string;
   otlpPort: number;
-  files: Array<{ path: string; action: "create" | "merge" | "install" }>;
+  files: Array<{ path: string; action: "create" | "merge" }>;
   disclosures: string[];
   before: { config: string | null; hooks: string | null };
   proposed: { config: string; hooks: string };
@@ -72,8 +72,6 @@ export interface SetupState {
   serverUrl: string;
   deviceId: string;
   credential: string | null;
-  /** Exact command whose Codex hook trust must be re-verified on every setup run. */
-  hookCommand?: string;
   fingerprintKey: string;
   policy: {
     version: number;
@@ -214,16 +212,6 @@ export async function previewMacosSetup(options: {
       { path: configPath, action: before.config === null ? "create" : "merge" },
       { path: hooksPath, action: before.hooks === null ? "create" : "merge" },
       { path: join(options.stateDir, setupStateName), action: "create" },
-      { path: options.relayCliPath, action: "install" },
-      {
-        path: join(
-          homedir(),
-          "Library",
-          "LaunchAgents",
-          "org.coding-agent-observability.relay.plist",
-        ),
-        action: "install",
-      },
     ],
     disclosures: [
       "Captured Codex content is visible to all Organization members.",
@@ -239,7 +227,6 @@ export async function previewMacosSetup(options: {
 interface HooksListResponse {
   data?: Array<{
     hooks?: Array<{
-      eventName?: string;
       sourcePath?: string;
       command?: string | null;
       enabled?: boolean;
@@ -248,18 +235,14 @@ interface HooksListResponse {
   }>;
 }
 
-export interface CodexHookTrustInspectionOptions {
+export async function verifyCodexHookTrust(options: {
   codexHome: string;
   cwd: string;
   expectedSourcePath: string;
   expectedCommand: string;
   codexPath?: string;
   timeoutMs?: number;
-}
-
-export async function inspectCodexHookTrust(
-  options: CodexHookTrustInspectionOptions,
-): Promise<"trusted" | "managed" | undefined> {
+}): Promise<boolean> {
   const child = spawn(options.codexPath ?? "codex", ["app-server"], {
     env: { ...process.env, CODEX_HOME: options.codexHome },
     stdio: ["pipe", "pipe", "pipe"],
@@ -349,21 +332,14 @@ export async function inspectCodexHookTrust(
         hook.sourcePath === options.expectedSourcePath &&
         hook.command === options.expectedCommand,
     );
-    const safe =
+    return (
       installedHooks.length === lifecycleEvents.length &&
-      lifecycleEvents.every(
-        (eventName) =>
-          installedHooks.filter((hook) => hook.eventName === eventName).length === 1,
-      ) &&
       installedHooks.every(
         (hook) =>
           hook.enabled === true &&
           (hook.trustStatus === "trusted" || hook.trustStatus === "managed"),
-      );
-    if (!safe) return undefined;
-    return installedHooks.every((hook) => hook.trustStatus === "managed")
-      ? "managed"
-      : "trusted";
+      )
+    );
   } catch (error) {
     throw new Error(
       `CODEX_HOOK_TRUST_INSPECTION_FAILED: ${error instanceof Error ? error.message : String(error)}`,
@@ -374,12 +350,6 @@ export async function inspectCodexHookTrust(
     responses.clear();
     child.kill();
   }
-}
-
-export async function verifyCodexHookTrust(
-  options: CodexHookTrustInspectionOptions,
-): Promise<boolean> {
-  return (await inspectCodexHookTrust(options)) !== undefined;
 }
 
 async function writePrivate(path: string, content: string): Promise<void> {
@@ -416,126 +386,72 @@ export async function applyMacosSetup(options: {
   serviceManager: RelayServiceManager;
   verifyDelivery: () => Promise<boolean>;
   verifyHookTrust: () => Promise<boolean>;
-  rollbackEnrollment: () => Promise<void>;
-  installRuntime?: () => Promise<void>;
   codexVersion?: string;
 }): Promise<void> {
   const { preview } = options;
   const paths = [join(preview.codexHome, "config.toml"), join(preview.codexHome, "hooks.json")];
-  let current: Array<string | null> | undefined;
-  let localFilesApplied = false;
-  let stateRecorded = false;
-  try {
-    current = await Promise.all(paths.map(optionalText));
-    if (current[0] !== preview.before.config || current[1] !== preview.before.hooks) {
-      throw new Error("SETUP_PREVIEW_STALE: Codex configuration changed after preview.");
-    }
-    const service: RelayServiceSpec = {
-      label: "org.coding-agent-observability.relay",
-      programArguments: [
-        preview.nodePath,
-        preview.relayCliPath,
-        "run",
-        "--state-dir",
-        preview.stateDir,
-        "--otlp-port",
-        String(preview.otlpPort),
-      ],
-      environment: { NODE_NO_WARNINGS: "1" },
-      standardOutPath: join(preview.stateDir, "relay.stdout.log"),
-      standardErrorPath: join(preview.stateDir, "relay.stderr.log"),
-    };
-    const state: SetupState = {
+  const current = await Promise.all(paths.map(optionalText));
+  if (current[0] !== preview.before.config || current[1] !== preview.before.hooks) {
+    throw new Error("SETUP_PREVIEW_STALE: Codex configuration changed after preview.");
+  }
+  await mkdir(preview.codexHome, { recursive: true });
+  await mkdir(preview.stateDir, { recursive: true });
+  await writeFile(paths[0], preview.proposed.config);
+  await writeFile(paths[1], preview.proposed.hooks);
+  const service: RelayServiceSpec = {
+    label: "org.coding-agent-observability.relay",
+    programArguments: [
+      preview.nodePath,
+      preview.relayCliPath,
+      "run",
+      "--state-dir",
+      preview.stateDir,
+      "--otlp-port",
+      String(preview.otlpPort),
+    ],
+    environment: { NODE_NO_WARNINGS: "1" },
+    standardOutPath: join(preview.stateDir, "relay.stdout.log"),
+    standardErrorPath: join(preview.stateDir, "relay.stderr.log"),
+  };
+  const state: SetupState = {
+    version: 1,
+    codexVersion: options.codexVersion ?? (await detectCodexCliVersion()),
+    codexHome: preview.codexHome,
+    stateDir: preview.stateDir,
+    serverUrl: preview.serverUrl,
+    deviceId: options.enrollment.deviceId,
+    credential: options.enrollment.credential,
+    fingerprintKey: randomBytes(32).toString("base64url"),
+    policy: {
       version: 1,
-      codexVersion: options.codexVersion ?? (await detectCodexCliVersion()),
-      codexHome: preview.codexHome,
-      stateDir: preview.stateDir,
-      serverUrl: preview.serverUrl,
-      deviceId: options.enrollment.deviceId,
-      credential: options.enrollment.credential,
-      hookCommand: preview.hookCommand,
-      fingerprintKey: randomBytes(32).toString("base64url"),
-      policy: {
-        version: 1,
-        ordinaryRedactionEnabled: true,
-        demoCanaryEnabled: false,
-      },
-      files: paths.map((path, index) => ({
-        path,
-        existed: current![index] !== null,
-        contentBase64: Buffer.from(current![index] ?? "").toString("base64"),
-        beforeHash: digest(current![index] ?? ""),
-        appliedHash: digest(index === 0 ? preview.proposed.config : preview.proposed.hooks),
-      })),
-      service,
-    };
-    await mkdir(preview.codexHome, { recursive: true });
-    await mkdir(preview.stateDir, { recursive: true });
-    localFilesApplied = true;
-    await writeFile(paths[0], preview.proposed.config);
-    await writeFile(paths[1], preview.proposed.hooks);
-    await writePrivate(join(preview.stateDir, setupStateName), `${JSON.stringify(state, null, 2)}\n`);
-    stateRecorded = true;
-    await options.installRuntime?.();
+      ordinaryRedactionEnabled: true,
+      demoCanaryEnabled: false,
+    },
+    files: paths.map((path, index) => ({
+      path,
+      existed: current[index] !== null,
+      contentBase64: Buffer.from(current[index] ?? "").toString("base64"),
+      beforeHash: digest(current[index] ?? ""),
+      appliedHash: digest(index === 0 ? preview.proposed.config : preview.proposed.hooks),
+    })),
+    service,
+  };
+  await writePrivate(join(preview.stateDir, setupStateName), `${JSON.stringify(state, null, 2)}\n`);
+  try {
     await options.serviceManager.install(service);
     await options.serviceManager.start();
+    if (!(await options.verifyDelivery())) {
+      throw new Error("SETUP_VERIFICATION_FAILED: relay test event was not acknowledged.");
+    }
     if (!(await options.verifyHookTrust())) {
       throw new Error(
         "SETUP_HOOK_TRUST_REQUIRED: review and trust the installed hooks in Codex, then rerun setup.",
       );
     }
-    if (!(await options.verifyDelivery())) {
-      throw new Error("SETUP_VERIFICATION_FAILED: relay test event was not acknowledged.");
-    }
   } catch (error) {
-    let rollbackFailure: unknown;
-    try {
-      await options.rollbackEnrollment();
-    } catch (rollbackError) {
-      rollbackFailure = rollbackError;
-    }
-    if (stateRecorded) {
-      try {
-        await uninstallMacosSetup({ stateDir: preview.stateDir, serviceManager: options.serviceManager });
-      } catch (rollbackError) {
-        rollbackFailure ??= rollbackError;
-      }
-    } else if (localFilesApplied && current) {
-      try {
-        const applied = [preview.proposed.config, preview.proposed.hooks];
-        for (let index = 0; index < paths.length; index += 1) {
-          const onDisk = await optionalText(paths[index]!);
-          if (onDisk === current[index]) continue;
-          if (onDisk !== applied[index]) {
-            throw new Error(
-              `SETUP_ROLLBACK_CONFIG_CHANGED: refusing to overwrite concurrent changes in ${paths[index]}.`,
-            );
-          }
-          if (current[index] === null) await rm(paths[index]!, { force: true });
-          else await writeFile(paths[index]!, current[index]!);
-        }
-        await rm(join(preview.stateDir, setupStateName), { force: true });
-      } catch (rollbackError) {
-        rollbackFailure ??= rollbackError;
-      }
-    }
-    if (rollbackFailure) {
-      throw new Error(
-        `SETUP_ROLLBACK_FAILED: setup failed (${error instanceof Error ? error.message : String(error)}); rollback failed (${rollbackFailure instanceof Error ? rollbackFailure.message : String(rollbackFailure)}).`,
-      );
-    }
+    await uninstallMacosSetup({ stateDir: preview.stateDir, serviceManager: options.serviceManager });
     throw error;
   }
-}
-
-/** Copies the bundled CLI away from a package cache or source checkout. */
-export async function installRelayRuntime(options: {
-  sourcePath: string;
-  installedPath: string;
-}): Promise<void> {
-  await mkdir(dirname(options.installedPath), { recursive: true });
-  await copyFile(options.sourcePath, options.installedPath);
-  await chmod(options.installedPath, 0o700);
 }
 
 export async function readSetupState(stateDir: string): Promise<SetupState> {
@@ -549,64 +465,39 @@ export async function writeSetupState(state: SetupState): Promise<void> {
   );
 }
 
-/**
- * Idempotent public setup seam. It proves the managed files are unchanged and
- * the exact installed hook command remains trusted before reporting success or
- * restarting a stopped per-user relay.
- */
-export async function ensureMacosSetupHealthy(options: {
-  stateDir: string;
-  serviceManager: RelayServiceManager;
-  verifyHookTrust: (state: SetupState) => Promise<boolean>;
-  verifyDelivery: (state: SetupState) => Promise<boolean>;
-}): Promise<"healthy" | "restarted"> {
-  const state = await readSetupState(options.stateDir);
-  if (!state.credential) {
-    throw new Error(
-      "SETUP_DISCONNECTED: uninstall the disconnected integration before enrolling again.",
-    );
-  }
-  if (!state.hookCommand) {
-    throw new Error(
-      "SETUP_HOOK_TRUST_REQUIRED: installed state lacks exact hook trust metadata; uninstall and run setup again.",
-    );
-  }
-  for (const snapshot of state.files) {
-    const current = await optionalText(snapshot.path);
-    if (digest(current ?? "") !== snapshot.appliedHash) {
-      throw new Error(
-        `SETUP_CONFIG_CHANGED: managed Codex configuration changed in ${snapshot.path}; restore or uninstall before setup.`,
-      );
-    }
-  }
-  if (!(await options.verifyHookTrust(state))) {
-    throw new Error(
-      "SETUP_HOOK_TRUST_REQUIRED: the installed hooks are modified, disabled, or untrusted; review Codex hook trust before retrying.",
-    );
-  }
-  const running = (await options.serviceManager.status()) === "running";
-  if (!running) {
-    await options.serviceManager.install(state.service);
-    await options.serviceManager.start();
-  }
-  if (!(await options.verifyDelivery(state))) {
-    throw new Error(
-      "SETUP_VERIFICATION_FAILED: relay delivery and Device diagnostics could not be reverified.",
-    );
-  }
-  return running ? "healthy" : "restarted";
-}
-
 export async function disconnectMacosSetup(options: {
   stateDir: string;
-  browserAuthorization: () => Promise<void>;
+  browserSession: string;
   serviceManager: RelayServiceManager;
+  fetch?: typeof globalThis.fetch;
 }): Promise<void> {
-  await options.browserAuthorization();
-  const state = await readSetupState(options.stateDir);
-  state.credential = null;
-  await writeSetupState(state);
+  await revokeMacosSetupCredential(options);
   await options.serviceManager.stop();
+}
+
+export async function revokeMacosSetupCredential(options: {
+  stateDir: string;
+  browserSession: string;
+  fetch?: typeof globalThis.fetch;
+}): Promise<void> {
+  const state = await readSetupState(options.stateDir);
+  requireSecureServerUrl(state.serverUrl);
+  if (state.credential) {
+    const response = await (options.fetch ?? globalThis.fetch)(
+      `${state.serverUrl}/api/v1/devices/${encodeURIComponent(state.deviceId)}/revoke`,
+      {
+        method: "POST",
+        headers: {
+          cookie: `${browserSessionCookieName}=${options.browserSession}`,
+        },
+      },
+    );
+    if (response.status !== 204) {
+      throw new Error(`DEVICE_REVOCATION_HTTP_${response.status}`);
+    }
+    state.credential = null;
+    await writeSetupState(state);
+  }
 }
 
 export async function uninstallMacosSetup(options: {
