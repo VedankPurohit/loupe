@@ -2,10 +2,20 @@
 
 > See inside every agent run.
 
+> [!IMPORTANT]
+> **Loupe is a temporary working codename and is expected to change.** Do not treat it as a final brand, register naming-dependent infrastructure without confirmation, or bake it into durable API, database, credential, or deployment identifiers.
+
 Loupe is an open-source, self-hosted observability and organizational-learning platform for coding agents. It captures real Codex Sessions, reconstructs Root and Subagent activity, helps teams diagnose failures and compare effective workflows, and turns cited evidence into human-approved Organization standards.
 
-> [!NOTE]
-> "Loupe" is the working name for this Build Week project.
+## Project identity
+
+- **Temporary product and project codename:** Loupe
+- **Repository slug:** `loupe`
+- **Intended GitHub repository:** `VedankPurohit/loupe`
+- **Package namespace:** undecided; the unscoped npm and PyPI name `loupe` is already occupied
+- **Website domain:** undecided
+
+The `VedankPurohit/loupe` repository returned no existing project when checked on July 17, 2026. It has not been created or reserved by this repository update. The repository slug may change with the final product name.
 
 ## Current status
 
@@ -88,10 +98,7 @@ All public HTTP routes live under `/api/v1`. The initial routes are:
 - `POST /api/v1/invites` (Administrator browser session only)
 - `POST /api/v1/invites/redeem`
 - `POST /api/v1/device-enrollment-grants`
-- `GET`/`POST /api/v1/device-enrollment/authorize` (browser-confirmed loopback installer hand-off)
 - `POST /api/v1/device-enrollments/redeem`
-- `GET`/`POST /api/v1/device-disconnect/authorize` (browser-confirmed disconnect)
-- `POST /api/v1/device-connection/revoke` (newly Enrolled device self-revocation for failed-setup rollback)
 - `GET /api/v1/devices`
 - `PATCH /api/v1/devices/:id/capture-policy`
 - `POST /api/v1/devices/:id/revoke`
@@ -208,7 +215,11 @@ pnpm test:compose
 - [`docs/production-investigation-interface.md`](./docs/production-investigation-interface.md) — selected production interface, synchronized evidence views, accessibility, live recovery, and deep links.
 - [`docs/investigation-prototypes.md`](./docs/investigation-prototypes.md) — three working ticket-11 investigation directions, their run commands, evaluation matrix, and screenshot checklist for the user-selection gate.
 - [`docs/macos-codex-setup.md`](./docs/macos-codex-setup.md) — setup preview and consent, `launchd`, configuration backup/restore, disconnect, uninstall, recovery, and the executable first-day checkpoint.
+- [Wayfinder map](./.scratch/coding-agent-observability/map.md) — decisions, validation frontier, and scope boundaries.
+- [Build-ready specification](./.scratch/coding-agent-observability/spec.md) — normative product, architecture, testing, and acceptance strategy.
+- [Implementation tickets](./.scratch/coding-agent-observability-implementation/issues/) — 16 typed, test-planned work packages with explicit blockers and documentation obligations.
+- [Visual build route](./.scratch/coding-agent-observability-implementation/roadmap.html) — interactive overview of phases, checkpoints, ticket dependencies, and scope boundaries.
 
-## License
+## Publishing guardrail
 
-Released under the [MIT License](./LICENSE).
+The local Git repository currently has no remote. Do not create, rename, push, or publish a remote repository without explicit authorization. When publication is authorized, use Vedank Purohit's personal GitHub account, [`VedankPurohit`](https://github.com/VedankPurohit), and do not publish from a work account.

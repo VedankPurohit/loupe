@@ -84,23 +84,8 @@ export async function recordCodexPayload(options: {
 export async function recordSetupVerification(options: {
   stateDir: string;
   sessionId?: string;
-  hookTrust: "trusted" | "managed";
-  relayState: "running" | "stopped";
 }): Promise<string[]> {
   const sessionId = options.sessionId ?? `setup-verification-${Date.now()}`;
-  const state = await readSetupState(options.stateDir);
-  const queue = openDeliveryQueue({
-    databasePath: join(options.stateDir, "relay.sqlite"),
-  });
-  const queued = queue.pending();
-  queue.close();
-  const queueState = {
-    pending: queued.filter(({ state: deliveryState }) => deliveryState === "pending")
-      .length,
-    poisoned: queued.filter(
-      ({ state: deliveryState }) => deliveryState === "poisoned",
-    ).length,
-  };
   const startId = await recordCodexPayload({
     stateDir: options.stateDir,
     source: "codex_hook",
@@ -119,13 +104,6 @@ export async function recordSetupVerification(options: {
       hook_event_name: "Stop",
       session_id: sessionId,
       source: "setup_verification_complete",
-      canonical_kind: "installation_health",
-      diagnostics: {
-        server_endpoint: state.serverUrl,
-        hook_trust: options.hookTrust,
-        relay_state: options.relayState,
-        queue: queueState,
-      },
     },
   });
   // The verification Session is relay-synthetic and genuinely over, so clear
@@ -205,8 +183,8 @@ function otlpAttribute(record: unknown, wanted: string): string | undefined {
  * internal Rust tracing spans per session (append_items, receiving,
  * handle_responses, persist_rollout_items, ...). We keep `codex.*` spans, the
  * source-defined `turn` span, and any span carrying `turn.id`/`thread.id`
- * correlation attributes (derived from an audit of real Codex 0.144.5 trace
- * exports).
+ * correlation attributes (see
+ * .scratch/coding-agent-observability/research/codex-capture-contract.md).
  */
 function isMeaningfulSpan(span: unknown, name: string): boolean {
   if (name.startsWith("codex.") || name === "turn") return true;
