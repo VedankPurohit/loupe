@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Agent Observatory — Build Route</title>
+  <!--
+    Art direction
+    Metaphor: a field operations map crossed with a railway signal board
+    Emotional register: calm, exact, consequential
+    Ink / paper / signal colors: warm paper, graphite, navy, signal orange, evidence teal
+    Display / reading / code: condensed system display, humanist system body, monospace labels
+    Signature visual: the capture-to-standardization signal route
+    Signature interaction: phase selector that reveals the active frontier and dependency consequence
+  -->
+  <style>
+    :root {
+      --paper: #f3efe4;
+      --paper-deep: #e7dfcf;
+      --ink: #17211f;
+      --muted: #5f6b66;
+      --line: #bcb5a6;
+      --navy: #173b52;
+      --teal: #16756f;
+      --orange: #e05c2b;
+      --amber: #d89522;
+      --red: #a13a2e;
+      --white: #fffdf8;
+      --shadow: 0 18px 50px rgba(32, 43, 39, .12);
+      --radius: 18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --display: "Arial Narrow", "Avenir Next Condensed", var(--sans);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(23, 33, 31, .032) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 33, 31, .032) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      font-family: var(--sans);
+      line-height: 1.5;
+    }
+
+    a { color: inherit; }
+    button { font: inherit; }
+    .shell { width: min(1240px, calc(100% - 36px)); margin: 0 auto; }
+
+    .masthead {
+      position: relative;
+      overflow: hidden;
+      min-height: 86vh;
+      padding: 24px 0 56px;
+      color: var(--white);
+      background: var(--navy);
+      isolation: isolate;
+    }
+    .masthead::before {
+      content: "";
+      position: absolute;
+      inset: -20%;
+      z-index: -2;
+      background:
+        radial-gradient(circle at 78% 26%, rgba(22, 117, 111, .8), transparent 26%),
+        linear-gradient(118deg, transparent 0 58%, rgba(224, 92, 43, .24) 58% 59%, transparent 59% 100%);
+    }
+    .masthead::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      opacity: .14;
+      background-image: repeating-linear-gradient(90deg, transparent 0 54px, #fff 54px 55px);
+      mask-image: linear-gradient(to bottom, black, transparent 72%);
+    }
+
+    .topbar { display: flex; justify-content: space-between; gap: 24px; align-items: center; }
+    .brand { display: flex; gap: 12px; align-items: center; letter-spacing: .04em; font-weight: 800; }
+    .brand-mark {
+      width: 30px; height: 30px; border-radius: 50%; border: 8px solid var(--orange);
+      box-shadow: 0 0 0 3px rgba(255,255,255,.85);
+    }
+    .doc-meta { font: 700 11px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .14em; opacity: .72; }
+
+    .hero-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 56px; align-items: end; padding-top: clamp(80px, 15vh, 160px); }
+    .eyebrow { margin: 0 0 20px; font: 800 12px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: #a8e0d9; }
+    h1 {
+      max-width: 850px; margin: 0; font-family: var(--display); font-size: clamp(54px, 9.4vw, 126px);
+      line-height: .82; letter-spacing: -.055em; text-transform: uppercase;
+    }
+    .hero-copy { max-width: 660px; margin: 30px 0 0; font-size: clamp(18px, 2vw, 25px); line-height: 1.35; color: #dce8e6; }
+    .hero-copy strong { color: white; }
+    .briefing {
+      align-self: stretch; padding: 26px; border: 1px solid rgba(255,255,255,.25); border-radius: var(--radius);
+      background: rgba(7, 26, 36, .5); backdrop-filter: blur(8px); box-shadow: var(--shadow);
+    }
+    .briefing h2 { margin: 0 0 24px; font: 800 13px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: #a8e0d9; }
+    .metric { display: grid; grid-template-columns: 70px 1fr; gap: 14px; align-items: baseline; padding: 15px 0; border-top: 1px solid rgba(255,255,255,.18); }
+    .metric b { font-family: var(--display); font-size: 42px; line-height: 1; color: white; }
+    .metric span { color: #c9d9d6; }
+
+    main { padding-bottom: 100px; }
+    section { padding: 90px 0 0; }
+    .section-kicker { margin: 0 0 10px; font: 800 11px/1 var(--mono); color: var(--orange); text-transform: uppercase; letter-spacing: .16em; }
+    .section-title { margin: 0; max-width: 920px; font-family: var(--display); font-size: clamp(38px, 6vw, 74px); line-height: .95; letter-spacing: -.035em; text-transform: uppercase; }
+    .section-lede { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: 18px; }
+
+    .route-board {
+      margin-top: 40px; padding: 34px; border: 1px solid var(--line); border-radius: 24px;
+      background: var(--white); box-shadow: var(--shadow); overflow: hidden;
+    }
+    .route {
+      position: relative; display: grid; grid-template-columns: repeat(7, minmax(110px, 1fr)); gap: 12px; min-width: 830px;
+      padding: 30px 6px 12px;
+    }
+    .route::before { content: ""; position: absolute; left: 7%; right: 7%; top: 58px; height: 6px; background: var(--navy); border-radius: 99px; }
+    .station { position: relative; z-index: 1; text-align: center; }
+    .station-dot { width: 32px; height: 32px; margin: 0 auto 14px; border: 7px solid var(--white); border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px var(--navy); }
+    .station:nth-child(5) .station-dot { background: var(--amber); }
+    .station:nth-child(6) .station-dot, .station:nth-child(7) .station-dot { background: var(--orange); }
+    .station b { display: block; font: 800 12px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .07em; }
+    .station small { display: block; margin-top: 8px; color: var(--muted); line-height: 1.3; }
+    .route-scroll { overflow-x: auto; padding-bottom: 10px; }
+
+    .rules { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 22px; }
+    .rule { padding: 20px; border-left: 4px solid var(--teal); background: var(--paper); }
+    .rule:nth-child(2) { border-color: var(--orange); }
+    .rule:nth-child(3) { border-color: var(--amber); }
+    .rule:nth-child(4) { border-color: var(--navy); }
+    .rule b { display: block; margin-bottom: 7px; font: 800 12px var(--mono); text-transform: uppercase; }
+    .rule p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .checkpoint-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 40px; }
+    .checkpoint { position: relative; padding: 30px; border-radius: var(--radius); background: var(--white); border: 1px solid var(--line); }
+    .checkpoint.primary { color: white; background: var(--teal); border-color: var(--teal); }
+    .checkpoint-label { font: 800 11px var(--mono); text-transform: uppercase; letter-spacing: .13em; opacity: .78; }
+    .checkpoint h3 { margin: 18px 0 8px; font-family: var(--display); font-size: 34px; line-height: 1; text-transform: uppercase; }
+    .checkpoint p { margin: 0; opacity: .8; }
+    .checkpoint ol { margin: 22px 0 0; padding-left: 22px; }
+    .checkpoint li { margin: 8px 0; }
+
+    .control-room { margin-top: 40px; border: 1px solid var(--line); border-radius: 24px; background: var(--white); overflow: hidden; box-shadow: var(--shadow); }
+    .phase-controls { display: flex; gap: 8px; padding: 18px; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--paper-deep); }
+    .phase-button {
+      flex: 0 0 auto; border: 1px solid var(--line); border-radius: 99px; padding: 10px 14px; color: var(--ink);
+      background: var(--white); cursor: pointer; font: 800 11px var(--mono); text-transform: uppercase; letter-spacing: .06em;
+    }
+    .phase-button:hover { border-color: var(--teal); }
+    .phase-button:focus-visible { outline: 3px solid rgba(224,92,43,.38); outline-offset: 2px; }
+    .phase-button[aria-pressed="true"] { color: white; border-color: var(--navy); background: var(--navy); }
+    .phase-readout { display: grid; grid-template-columns: .72fr 1.28fr; min-height: 230px; }
+    .phase-summary { padding: 28px; color: white; background: var(--navy); }
+    .phase-summary .phase-no { font: 800 12px var(--mono); color: #a8e0d9; text-transform: uppercase; letter-spacing: .13em; }
+    .phase-summary h3 { margin: 20px 0 12px; font-family: var(--display); font-size: 42px; line-height: .95; text-transform: uppercase; }
+    .phase-summary p { margin: 0; color: #c9d9d6; }
+    .phase-consequence { padding: 28px; }
+    .phase-consequence h4 { margin: 0 0 16px; font: 800 12px var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--orange); }
+    .phase-consequence p { margin: 0 0 20px; font-size: 18px; }
+    .phase-ticket-list { display: flex; flex-wrap: wrap; gap: 8px; }
+    .mini-ticket { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font: 700 11px var(--mono); background: var(--paper); }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 28px 0 18px; color: var(--muted); font-size: 13px; }
+    .legend span { display: inline-flex; gap: 7px; align-items: center; }
+    .swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--teal); }
+    .swatch.prototype { background: var(--amber); }
+    .swatch.verify { background: var(--orange); }
+    .swatch.docs { background: var(--navy); }
+
+    .ticket-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .ticket {
+      position: relative; display: grid; grid-template-columns: 58px 1fr; gap: 16px; min-height: 170px;
+      padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); transition: transform .2s ease, opacity .2s ease, border-color .2s ease;
+    }
+    .ticket:hover { transform: translateY(-3px); border-color: var(--teal); }
+    .ticket.dimmed { opacity: .28; }
+    .ticket.active { border: 2px solid var(--orange); box-shadow: 0 12px 36px rgba(224,92,43,.16); }
+    .ticket-no { font-family: var(--display); font-size: 44px; line-height: 1; color: var(--teal); }
+    .ticket[data-type="prototype"] .ticket-no { color: var(--amber); }
+    .ticket[data-type="verification"] .ticket-no { color: var(--orange); }
+    .ticket[data-type="documentation"] .ticket-no { color: var(--navy); }
+    .ticket h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.2; }
+    .ticket p { margin: 0; color: var(--muted); font-size: 14px; }
+    .ticket-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+    .tag { padding: 5px 7px; border-radius: 4px; background: var(--paper); font: 700 10px var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+    .ticket-link { position: absolute; inset: 0; border-radius: inherit; }
+    .ticket-link:focus-visible { outline: 4px solid rgba(224,92,43,.38); outline-offset: 3px; }
+
+    .matrix { width: 100%; margin-top: 36px; border-collapse: collapse; border: 1px solid var(--line); background: var(--white); }
+    .matrix th, .matrix td { padding: 15px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .matrix th { font: 800 11px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--white); background: var(--navy); }
+    .matrix td:first-child { font-weight: 800; }
+    .matrix td { color: var(--muted); }
+
+    .work-loop { display: grid; grid-template-columns: .8fr 1.2fr; gap: 24px; margin-top: 40px; }
+    .loop-diagram { padding: 28px; border-radius: var(--radius); color: white; background: var(--teal); }
+    .loop-diagram h3 { margin: 0 0 24px; font-family: var(--display); font-size: 40px; text-transform: uppercase; }
+    .loop-step { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start; padding: 14px 0; border-top: 1px solid rgba(255,255,255,.28); }
+    .loop-step b { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--teal); background: white; }
+    .loop-step span { color: #e6f4f1; }
+    .work-notes { padding: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--white); }
+    .work-notes h3 { margin: 0 0 18px; font-family: var(--display); font-size: 34px; text-transform: uppercase; }
+    .work-notes ul { margin: 0; padding-left: 21px; }
+    .work-notes li { margin: 12px 0; color: var(--muted); }
+
+    .boundary-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 22px; margin-top: 36px; }
+    .boundary { padding: 28px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--white); }
+    .boundary h3 { margin: 0 0 20px; font-family: var(--display); font-size: 34px; text-transform: uppercase; }
+    .boundary-list { display: grid; gap: 10px; }
+    .boundary-row { display: grid; grid-template-columns: 116px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+    .boundary-row b { font: 800 11px var(--mono); text-transform: uppercase; color: var(--teal); }
+    .boundary-row span { color: var(--muted); }
+    .not-building { color: white; background: var(--red); border-color: var(--red); }
+    .not-building ul { margin: 0; padding-left: 20px; columns: 2; column-gap: 28px; }
+    .not-building li { margin: 0 0 12px; break-inside: avoid; }
+
+    .source-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .source-links a { padding: 10px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); text-decoration: none; font: 700 12px var(--mono); }
+    .source-links a:hover { border-color: var(--orange); }
+    footer { padding: 80px 0 44px; color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 900px) {
+      .hero-grid, .phase-readout, .work-loop, .boundary-grid { grid-template-columns: 1fr; }
+      .hero-grid { gap: 30px; padding-top: 80px; }
+      .briefing { max-width: 600px; }
+      .rules { grid-template-columns: repeat(2, 1fr); }
+      .ticket-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 620px) {
+      .shell { width: min(100% - 24px, 1240px); }
+      .masthead { min-height: auto; padding-bottom: 38px; }
+      .topbar { align-items: flex-start; }
+      .doc-meta { text-align: right; max-width: 150px; }
+      h1 { font-size: clamp(50px, 18vw, 76px); }
+      .hero-copy { font-size: 18px; }
+      section { padding-top: 66px; }
+      .route-board, .checkpoint, .phase-summary, .phase-consequence, .boundary, .loop-diagram, .work-notes { padding: 22px; }
+      .rules, .checkpoint-grid { grid-template-columns: 1fr; }
+      .ticket { grid-template-columns: 46px 1fr; padding: 18px; }
+      .ticket-no { font-size: 36px; }
+      .matrix-wrap { overflow-x: auto; }
+      .matrix { min-width: 670px; }
+      .not-building ul { columns: 1; }
+      .boundary-row { grid-template-columns: 1fr; gap: 4px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="shell">
+      <div class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true"></span> Agent Observatory</div>
+        <div class="doc-meta">Build route 01<br>Codex-first · macOS</div>
+      </div>
+      <div class="hero-grid">
+        <div>
+          <p class="eyebrow">OpenAI Build Week / operations field map</p>
+          <h1>See the work.<br>Learn as a team.</h1>
+          <p class="hero-copy">A self-hosted route from <strong>real Codex activity</strong> to a human-approved, mandatory Organization standard—without pretending inferred or unavailable evidence is exact.</p>
+        </div>
+        <aside class="briefing" aria-label="Roadmap facts">
+          <h2>Mission briefing</h2>
+          <div class="metric"><b>16</b><span>agent-ready work packages</span></div>
+          <div class="metric"><b>06</b><span>tickets to the first-day checkpoint</span></div>
+          <div class="metric"><b>03</b><span>confirmed test seams: API, adapter, full system</span></div>
+          <div class="metric"><b>01</b><span>live adapter: Codex on macOS</span></div>
+        </aside>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="shell" aria-labelledby="mechanism-title">
+      <p class="section-kicker">01 / The mechanism</p>
+      <h2 class="section-title" id="mechanism-title">A signal route from laptop evidence to Organization learning.</h2>
+      <p class="section-lede">The product is not a generic token dashboard. Its unusual mechanism is the preserved chain of evidence: source truth survives every projection, recommendation, approval, and rollout.</p>
+
+      <div class="route-board">
+        <div class="route-scroll" tabindex="0" aria-label="Horizontal system route">
+          <div class="route">
+            <div class="station"><div class="station-dot"></div><b>Codex</b><small>OTel + lifecycle hooks</small></div>
+            <div class="station"><div class="station-dot"></div><b>Mac relay</b><small>redact + SQLite queue</small></div>
+            <div class="station"><div class="station-dot"></div><b>/api/v1</b><small>one shared contract</small></div>
+            <div class="station"><div class="station-dot"></div><b>Central store</b><small>raw evidence + projection</small></div>
+            <div class="station"><div class="station-dot"></div><b>Investigation</b><small>browser + Analysis CLI</small></div>
+            <div class="station"><div class="station-dot"></div><b>Human gate</b><small>exact hash approval</small></div>
+            <div class="station"><div class="station-dot"></div><b>Standards</b><small>mandatory safe sync</small></div>
+          </div>
+        </div>
+        <div class="rules">
+          <article class="rule"><b>Real core path</b><p>Fixtures help tests and onboarding; they never replace capture, persistence, search, comparison, or CLI evidence.</p></article>
+          <article class="rule"><b>Truth has a label</b><p>Documented, observed, inferred, unstable, and unavailable stay distinct through every surface.</p></article>
+          <article class="rule"><b>Humans approve</b><p>An agent can propose a complete skill. Only an Administrator can approve the exact immutable artifact.</p></article>
+          <article class="rule"><b>Devices obey safely</b><p>Approved standards are mandatory, but download, verification, active-Session deferral, atomic switch, pause, and rollback protect the fleet.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="shell" aria-labelledby="milestones-title">
+      <p class="section-kicker">02 / Milestones</p>
+      <h2 class="section-title" id="milestones-title">One architecture. Two proof points.</h2>
+      <div class="checkpoint-grid">
+        <article class="checkpoint primary">
+          <div class="checkpoint-label">Ticket 06 · first-day checkpoint</div>
+          <h3>The unbroken path</h3>
+          <p>Visually plain is acceptable. Fake data and unreliable capture are not.</p>
+          <ol>
+            <li>Bootstrap and enroll one Mac</li>
+            <li>Install the restartable relay</li>
+            <li>Capture real Codex activity</li>
+            <li>Recover from interruption</li>
+            <li>Persist and project in PostgreSQL</li>
+            <li>Inspect in browser and CLI</li>
+          </ol>
+        </article>
+        <article class="checkpoint">
+          <div class="checkpoint-label">Ticket 16 · hackathon proof</div>
+          <h3>The learning loop</h3>
+          <p>The same real path becomes a product for investigation and Organization improvement.</p>
+          <ol>
+            <li>Explain tools, hierarchy, Token, and Context</li>
+            <li>Search and compare cited evidence</li>
+            <li>Let an analysis agent propose a skill</li>
+            <li>Review and approve the exact hash</li>
+            <li>Synchronize it to every device</li>
+            <li>Pause or roll back safely</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section class="shell" id="tickets" aria-labelledby="tickets-title">
+      <p class="section-kicker">03 / The route</p>
+      <h2 class="section-title" id="tickets-title">Sixteen work packages. One dependency frontier.</h2>
+      <p class="section-lede">Select a phase to see what becomes possible and which tickets belong to that frontier. Ticket cards link to the local Markdown source of truth.</p>
+
+      <div class="control-room">
+        <div class="phase-controls" role="group" aria-label="Select roadmap phase">
+          <button class="phase-button" data-phase="all" aria-pressed="true">Full route</button>
+          <button class="phase-button" data-phase="foundation" aria-pressed="false">1 · Foundation</button>
+          <button class="phase-button" data-phase="evidence" aria-pressed="false">2 · Evidence</button>
+          <button class="phase-button" data-phase="experience" aria-pressed="false">3 · Experience</button>
+          <button class="phase-button" data-phase="learning" aria-pressed="false">4 · Learning</button>
+          <button class="phase-button" data-phase="ship" aria-pressed="false">5 · Ship</button>
+        </div>
+        <div class="phase-readout" aria-live="polite">
+          <div class="phase-summary">
+            <div class="phase-no" id="phaseNo">All phases</div>
+            <h3 id="phaseTitle">The complete build route</h3>
+            <p id="phaseSummary">Start with truth on one Mac, deepen the evidence, choose the interface, close the learning loop, then package and prove it.</p>
+          </div>
+          <div class="phase-consequence">
+            <h4>What this unlocks</h4>
+            <p id="phaseConsequence">A real self-hosted observability product whose recommendations remain traceable to captured work.</p>
+            <div class="phase-ticket-list" id="phaseTickets">
+              <span class="mini-ticket">01–16 · complete route</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="legend" aria-label="Ticket type legend">
+        <span><i class="swatch"></i> Implementation</span>
+        <span><i class="swatch prototype"></i> Prototype</span>
+        <span><i class="swatch verify"></i> Verification</span>
+        <span><i class="swatch docs"></i> Documentation included</span>
+      </div>
+
+      <div class="ticket-grid">
+        <article class="ticket" data-phase="foundation" data-type="implementation"><div class="ticket-no">01</div><div><h3>Product + Organization bootstrap</h3><p>Runnable monorepo, `/api/v1`, PostgreSQL, React shell, Bootstrap code, and first Administrator.</p><div class="ticket-meta"><span class="tag">start here</span><span class="tag">API seam</span></div></div><a class="ticket-link" aria-label="Open ticket 01" href="issues/01-establish-product-and-bootstrap.md"></a></article>
+        <article class="ticket" data-phase="foundation" data-type="implementation"><div class="ticket-no">02</div><div><h3>Device enrollment + capture policy</h3><p>Scoped Device credentials, per-device Settings, real secret redaction, and exact Demo canary.</p><div class="ticket-meta"><span class="tag">blocked by 01</span><span class="tag">security</span></div></div><a class="ticket-link" aria-label="Open ticket 02" href="issues/02-enroll-devices-and-control-capture-policy.md"></a></article>
+        <article class="ticket" data-phase="foundation" data-type="prototype"><div class="ticket-no">03</div><div><h3>Target-version Codex probe</h3><p>A day-zero macOS probe creates sanitized fixtures and an honest, versioned capability contract before production schemas harden.</p><div class="ticket-meta"><span class="tag">start in parallel</span><span class="tag">prototype</span></div></div><a class="ticket-link" aria-label="Open ticket 03" href="issues/03-prove-target-codex-adapter.md"></a></article>
+        <article class="ticket" data-phase="foundation" data-type="implementation"><div class="ticket-no">04</div><div><h3>Codex adapter + reliable delivery</h3><p>Production adapter, SQLite queue, authenticated batches, idempotent acknowledgements, interruption recovery, and immutable source evidence.</p><div class="ticket-meta"><span class="tag">blocked by 02, 03</span><span class="tag">delivery</span></div></div><a class="ticket-link" aria-label="Open ticket 04" href="issues/04-deliver-events-to-the-central-store.md"></a></article>
+        <article class="ticket" data-phase="foundation" data-type="implementation"><div class="ticket-no">05</div><div><h3>Live execution projection</h3><p>Sessions, Turns, Agent runs, Activity episodes, provenance, SSE, diagnostic CLI, and plain inspector.</p><div class="ticket-meta"><span class="tag">blocked by 04</span><span class="tag">projection</span></div></div><a class="ticket-link" aria-label="Open ticket 05" href="issues/05-project-and-inspect-live-execution.md"></a></article>
+        <article class="ticket" data-phase="foundation" data-type="verification"><div class="ticket-no">06</div><div><h3>macOS setup + first-day proof</h3><p>Safe config, `launchd`, verification, disconnect/uninstall, restart recovery, and the first complete acceptance path.</p><div class="ticket-meta"><span class="tag">blocked by 04, 05</span><span class="tag">checkpoint</span></div></div><a class="ticket-link" aria-label="Open ticket 06" href="issues/06-complete-macos-setup-and-first-day-checkpoint.md"></a></article>
+        <article class="ticket" data-phase="evidence" data-type="implementation"><div class="ticket-no">07</div><div><h3>Members, ownership + Git context</h3><p>Invite real people, preserve historical ownership, and enrich captured work with sanitized local Git evidence.</p><div class="ticket-meta"><span class="tag">blocked by 01, 05</span></div></div><a class="ticket-link" aria-label="Open ticket 07" href="issues/07-support-members-ownership-and-git-context.md"></a></article>
+        <article class="ticket" data-phase="evidence" data-type="implementation"><div class="ticket-no">08</div><div><h3>Rich Session evidence</h3><p>Tools, lifecycle, skills, MCP, Token, Context, and estimated cost—each at its defensible fidelity.</p><div class="ticket-meta"><span class="tag">blocked by 03, 05</span><span class="tag">evidence</span></div></div><a class="ticket-link" aria-label="Open ticket 08" href="issues/08-explain-rich-session-evidence.md"></a></article>
+        <article class="ticket" data-phase="evidence" data-type="implementation"><div class="ticket-no">09</div><div><h3>Organization discovery + search</h3><p>Activity, repositories, search, annotations, and explicit idempotent Example-data loading.</p><div class="ticket-meta"><span class="tag">blocked by 07, 08</span></div></div><a class="ticket-link" aria-label="Open ticket 09" href="issues/09-deliver-organization-discovery-and-search.md"></a></article>
+        <article class="ticket" data-phase="evidence" data-type="implementation"><div class="ticket-no">10</div><div><h3>Comparison + evidence standards</h3><p>Compare Sessions or Turns, cite exact evidence, and refuse unsupported causal or productivity claims.</p><div class="ticket-meta"><span class="tag">blocked by 09</span></div></div><a class="ticket-link" aria-label="Open ticket 10" href="issues/10-compare-sessions-and-enforce-evidence.md"></a></article>
+        <article class="ticket" data-phase="experience" data-type="prototype"><div class="ticket-no">11</div><div><h3>Multiple investigation prototypes</h3><p>At least three genuinely different working directions, built with the prototype and interface-design skills.</p><div class="ticket-meta"><span class="tag">blocked by 08–10</span><span class="tag">prototype</span></div></div><a class="ticket-link" aria-label="Open ticket 11" href="issues/11-prototype-investigation-interfaces.md"></a></article>
+        <article class="ticket" data-phase="experience" data-type="implementation"><div class="ticket-no">12</div><div><h3>Selected polished interface</h3><p>The chosen responsive, accessible React investigation experience backed only by `/api/v1`.</p><div class="ticket-meta"><span class="tag">blocked by 11</span><span class="tag">Playwright</span></div></div><a class="ticket-link" aria-label="Open ticket 12" href="issues/12-implement-selected-interface.md"></a></article>
+        <article class="ticket" data-phase="learning" data-type="implementation"><div class="ticket-no">13</div><div><h3>Analysis + Candidate submission</h3><p>Scoped CLI, companion skill, evidence-guided investigation, and complete versioned Candidate skills.</p><div class="ticket-meta"><span class="tag">blocked by 09, 10</span></div></div><a class="ticket-link" aria-label="Open ticket 13" href="issues/13-deliver-analysis-and-candidate-submission.md"></a></article>
+        <article class="ticket" data-phase="learning" data-type="implementation"><div class="ticket-no">14</div><div><h3>Approval + mandatory standards</h3><p>Exact-hash human approval followed by safe, mandatory daemon synchronization, pause, and rollback.</p><div class="ticket-meta"><span class="tag">blocked by 02, 06, 12, 13</span></div></div><a class="ticket-link" aria-label="Open ticket 14" href="issues/14-approve-and-synchronize-standards.md"></a></article>
+        <article class="ticket" data-phase="ship" data-type="documentation"><div class="ticket-no">15</div><div><h3>Deployment + operations handbook</h3><p>Native/Compose parity, persistence, upgrades, and complete repository-native operating documentation.</p><div class="ticket-meta"><span class="tag">blocked by 06, 12–14</span></div></div><a class="ticket-link" aria-label="Open ticket 15" href="issues/15-package-deployment-and-documentation.md"></a></article>
+        <article class="ticket" data-phase="ship" data-type="verification"><div class="ticket-no">16</div><div><h3>Complete hackathon proof</h3><p>One real-data run verifies the entire capture → investigation → learning → rollout loop and its limitations.</p><div class="ticket-meta"><span class="tag">blocked by 06–15</span><span class="tag">final gate</span></div></div><a class="ticket-link" aria-label="Open ticket 16" href="issues/16-verify-complete-hackathon-demonstration.md"></a></article>
+      </div>
+    </section>
+
+    <section class="shell" aria-labelledby="operating-title">
+      <p class="section-kicker">04 / How the work runs</p>
+      <h2 class="section-title" id="operating-title">One orchestrator. A tested frontier. Documentation in the loop.</h2>
+      <div class="work-loop">
+        <div class="loop-diagram">
+          <h3>The ticket loop</h3>
+          <div class="loop-step"><b>1</b><span>Pick a ticket whose blockers are complete.</span></div>
+          <div class="loop-step"><b>2</b><span>Use its required skills and split internal work across subagents where useful.</span></div>
+          <div class="loop-step"><b>3</b><span>Write the first failing behavior test at the confirmed seam.</span></div>
+          <div class="loop-step"><b>4</b><span>Implement one vertical tracer bullet until the ticket's acceptance criteria pass.</span></div>
+          <div class="loop-step"><b>5</b><span>Update the relevant contracts and documentation before marking the ticket complete.</span></div>
+        </div>
+        <div class="work-notes">
+          <h3>What every ticket carries</h3>
+          <ul>
+            <li><strong>Type and required skills</strong> so the agent knows whether it is implementing, prototyping, verifying, or documenting.</li>
+            <li><strong>A highest-seam testing plan</strong> naming the first red behavior, real-versus-fixture boundary, and verification path.</li>
+            <li><strong>A documentation obligation</strong> tied to the behavior introduced—not postponed until the end.</li>
+            <li><strong>Explicit blockers</strong> so the orchestrator can work the dependency frontier rather than following file order blindly.</li>
+            <li><strong>Downgrade behavior</strong> wherever Codex evidence may be weaker than hoped. Unsupported data becomes unavailable, not invented.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="shell" aria-labelledby="truth-title">
+      <p class="section-kicker">05 / Evidence boundary</p>
+      <h2 class="section-title" id="truth-title">Five labels prevent one convincing lie.</h2>
+      <div class="matrix-wrap">
+        <table class="matrix">
+          <thead><tr><th>Evidence state</th><th>What it means</th><th>How the product behaves</th></tr></thead>
+          <tbody>
+            <tr><td>Documented</td><td>Named by the supported public Codex surface.</td><td>Use directly, still retain producer version and provenance.</td></tr>
+            <tr><td>Observed</td><td>Found in first-party source or artifacts, but not promised publicly.</td><td>Show with version context; tolerate change.</td></tr>
+            <tr><td>Inferred</td><td>Calculated or correlated from retained evidence.</td><td>Show method, inputs, confidence, and missing assumptions.</td></tr>
+            <tr><td>Unstable</td><td>Experimental, internal, transcript, rollout, or version-gated.</td><td>Keep isolated and downgrade safely when the producer changes.</td></tr>
+            <tr><td>Unavailable</td><td>The source cannot support the requested fact.</td><td>Never turn it into zero, false, or a plausible guess.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="shell" aria-labelledby="scope-title">
+      <p class="section-kicker">06 / Scope line</p>
+      <h2 class="section-title" id="scope-title">Build the learning loop. Refuse the platform sprawl.</h2>
+      <div class="boundary-grid">
+        <article class="boundary">
+          <h3>Real in this MVP</h3>
+          <div class="boundary-list">
+            <div class="boundary-row"><b>Capture</b><span>Codex on macOS, user-level OTel and hooks, restartable relay, durable local delivery.</span></div>
+            <div class="boundary-row"><b>Organization</b><span>One self-hosted Organization, real Members, Organization-visible Sessions, scoped credentials.</span></div>
+            <div class="boundary-row"><b>Investigation</b><span>Timeline, Agent hierarchy, provenance, search, comparison, Token/Context evidence, citations.</span></div>
+            <div class="boundary-row"><b>Learning</b><span>Analysis CLI and skill, complete Candidate skill, Administrator approval, mandatory synchronization.</span></div>
+            <div class="boundary-row"><b>Operation</b><span>Docker-free native development, one-command Compose deployment, repository-native documentation.</span></div>
+          </div>
+        </article>
+        <article class="boundary not-building">
+          <h3>Explicitly not now</h3>
+          <ul>
+            <li>Remote control or steering</li>
+            <li>Agents beyond Codex</li>
+            <li>Linux and Windows daemons</li>
+            <li>Multi-Organization hosting</li>
+            <li>Automatic approval</li>
+            <li>Member opt-out from standards</li>
+            <li>Productivity leaderboards</li>
+            <li>Background pattern mining</li>
+            <li>Semantic vector search</li>
+            <li>Full CI/PR/deployment outcomes</li>
+            <li>Historical backfill</li>
+            <li>Kafka or Kubernetes</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="source-links" aria-label="Source documents">
+        <a href="../coding-agent-observability/spec.md">Build-ready specification</a>
+        <a href="../../VISION.md">Product vision</a>
+        <a href="../../DEMO.md">Demo contract</a>
+        <a href="../../CONTEXT.md">Domain vocabulary</a>
+        <a href="issues/">Implementation tickets</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="shell">
+    <strong>Agent Observatory build route.</strong> Generated from the approved local Markdown tracker. The ticket files remain the implementation source of truth.
+  </footer>
+
+  <script>
+    const phases = {
+      all: {
+        no: 'All phases',
+        title: 'The complete build route',
+        summary: 'Start with truth on one Mac, deepen the evidence, choose the interface, close the learning loop, then package and prove it.',
+        consequence: 'A real self-hosted observability product whose recommendations remain traceable to captured work.',
+        tickets: ['01–16 · complete route']
+      },
+      foundation: {
+        no: 'Phase 1 · Tickets 01–06',
+        title: 'Prove the unbroken path',
+        summary: 'Start product bootstrap and the independent Codex probe in parallel, then converge through enrollment, adapter delivery, projection, and restartable setup before investing in polish.',
+        consequence: 'One real Codex Session survives interruption and becomes inspectable through both browser and CLI.',
+        tickets: ['01 Foundation · start', '03 Codex probe · start', '02 Enrollment', '04 Adapter + delivery', '05 Projection', '06 Checkpoint']
+      },
+      evidence: {
+        no: 'Phase 2 · Tickets 07–10',
+        title: 'Make the evidence useful',
+        summary: 'Add real people and Git context, explain rich Session activity, make history discoverable, and enforce claim standards.',
+        consequence: 'A Coach can find a relevant Session, understand what happened, compare it, and cite the exact supporting activity.',
+        tickets: ['07 Ownership + Git', '08 Rich evidence', '09 Discovery', '10 Comparison']
+      },
+      experience: {
+        no: 'Phase 3 · Tickets 11–12',
+        title: 'Choose, then build the interface',
+        summary: 'Use the prototype skill to create several genuinely different working interfaces before committing to a production direction.',
+        consequence: 'The UI serves the investigation model instead of forcing the backend into a generic dashboard template.',
+        tickets: ['11 Multiple prototypes', '12 Selected interface']
+      },
+      learning: {
+        no: 'Phase 4 · Tickets 13–14',
+        title: 'Close the Organization loop',
+        summary: 'Let an analysis agent submit cited improvements, keep approval human-only, then distribute the exact approved skill safely.',
+        consequence: 'Evidence becomes a mandatory Organization standard with pause and rollback—not an unreviewed agent suggestion.',
+        tickets: ['13 Analysis + Candidate', '14 Approval + sync']
+      },
+      ship: {
+        no: 'Phase 5 · Tickets 15–16',
+        title: 'Package and prove the product',
+        summary: 'Align native and Compose operation, finish the handbook, and run the complete real-data demonstration.',
+        consequence: 'A new operator can deploy and verify the product without access to the planning conversation.',
+        tickets: ['15 Deployment + docs', '16 Final proof']
+      }
+    };
+
+    const buttons = [...document.querySelectorAll('.phase-button')];
+    const tickets = [...document.querySelectorAll('.ticket')];
+    const no = document.getElementById('phaseNo');
+    const title = document.getElementById('phaseTitle');
+    const summary = document.getElementById('phaseSummary');
+    const consequence = document.getElementById('phaseConsequence');
+    const list = document.getElementById('phaseTickets');
+
+    function selectPhase(key) {
+      const phase = phases[key];
+      buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.phase === key)));
+      tickets.forEach(ticket => {
+        const selected = key === 'all' || ticket.dataset.phase === key;
+        ticket.classList.toggle('dimmed', !selected);
+        ticket.classList.toggle('active', selected && key !== 'all');
+      });
+      no.textContent = phase.no;
+      title.textContent = phase.title;
+      summary.textContent = phase.summary;
+      consequence.textContent = phase.consequence;
+      list.replaceChildren(...phase.tickets.map(item => {
+        const span = document.createElement('span');
+        span.className = 'mini-ticket';
+        span.textContent = item;
+        return span;
+      }));
+    }
+
+    buttons.forEach(button => button.addEventListener('click', () => selectPhase(button.dataset.phase)));
+  </script>
+</body>
+</html>

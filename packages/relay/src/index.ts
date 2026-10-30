@@ -439,37 +439,9 @@ export interface DeliveryAttempt {
   poisoned: number;
 }
 
-export interface DeliveryQueueStructuralObservation {
-  sourceEventId: string;
-  sourceFamily: string;
-  producerVersion: string;
-  eventName: string;
-  sourceIdentity: string;
-  payloadHash: string;
-  occurredAt: string;
-  capturedAt: string;
-  adapterDisposition: string;
-  fieldPresence: {
-    sessionIdentity: boolean;
-    turnIdentity: boolean;
-    traceIdentity: boolean;
-    gitContext: boolean;
-    canonicalObservations: boolean;
-  };
-  queue: {
-    state: "pending" | "acknowledged" | "poisoned";
-    attempts: number;
-    nextAttemptAt: string | null;
-    lastError: string | null;
-  };
-}
-
 export interface DeliveryQueue {
   record(event: SourceEvent): { eventId: string; status: "pending" | "duplicate" };
   pending(): DeliveryQueueItem[];
-  structuralStatus(options?: {
-    sessionId?: string;
-  }): { observations: DeliveryQueueStructuralObservation[] };
   deliverOnce(options: {
     baseUrl: string;
     deviceCredential: string;
@@ -478,116 +450,6 @@ export interface DeliveryQueue {
     fetch?: typeof globalThis.fetch;
   }): Promise<DeliveryAttempt>;
   close(): void;
-}
-
-function structuralAttribute(container: unknown, wanted: string): string | undefined {
-  const attributes = (container as { attributes?: unknown })?.attributes;
-  if (!Array.isArray(attributes)) return undefined;
-  for (const candidate of attributes) {
-    const attribute = candidate as {
-      key?: unknown;
-      value?: { stringValue?: unknown; intValue?: unknown };
-    };
-    if (attribute.key !== wanted) continue;
-    const value = attribute.value?.stringValue ?? attribute.value?.intValue;
-    if (typeof value === "string" || typeof value === "number") {
-      return String(value);
-    }
-  }
-  return undefined;
-}
-
-function safeStructuralLabel(value: unknown): string | undefined {
-  return typeof value === "string" &&
-    /^[A-Za-z0-9][A-Za-z0-9_.:/+@-]{0,159}$/.test(value)
-    ? value
-    : undefined;
-}
-
-const structuralHookEventNames = new Set([
-  "SessionStart",
-  "SessionEnd",
-  "UserPromptSubmit",
-  "PreToolUse",
-  "PostToolUse",
-  "PermissionRequest",
-  "Stop",
-  "PreCompact",
-  "PostCompact",
-  "SubagentStart",
-  "SubagentStop",
-]);
-
-function safeProducerEvent(event: SourceEvent): string {
-  const value = safeStructuralLabel(event.producer.event);
-  if (!value) return "unavailable";
-  if (event.source === "codex_hook") {
-    return structuralHookEventNames.has(value)
-      ? value
-      : "unavailable";
-  }
-  if (event.source === "codex_otel_log") {
-    return /^(?:codex|otlp)\.[A-Za-z0-9_.-]+$/.test(value)
-      ? value
-      : "unavailable";
-  }
-  if (event.source === "codex_otel_trace") {
-    return value === "turn" ||
-      value === "mcp.tools.call" ||
-      /^(?:codex|otlp)\.[A-Za-z0-9_.-]+$/.test(value)
-      ? value
-      : "unavailable";
-  }
-  return "unavailable";
-}
-
-function sourceEventStructuralIdentity(event: SourceEvent) {
-  const payload = event.rawPayload as Record<string, unknown>;
-  const logRecord = payload.log_record;
-  const span = payload.span;
-  const sessionId = safeStructuralLabel(
-    payload.session_id ??
-      structuralAttribute(logRecord, "conversation.id") ??
-      structuralAttribute(logRecord, "thread.id") ??
-      structuralAttribute(span, "conversation.id") ??
-      structuralAttribute(span, "thread.id"),
-  );
-  const turnId = safeStructuralLabel(
-    payload.turn_id ??
-      structuralAttribute(logRecord, "turn.id") ??
-      structuralAttribute(span, "turn.id"),
-  );
-  const traceId = safeStructuralLabel(
-    (span as { traceId?: unknown } | undefined)?.traceId ?? payload.trace_id,
-  );
-  return { sessionId, turnId, traceId };
-}
-
-function toStructuralObservation(event: SourceEvent) {
-  const identity = sourceEventStructuralIdentity(event);
-  return {
-    sourceEventId: event.id,
-    sourceFamily: event.source,
-    producerVersion:
-      /^(?:unknown|\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.test(
-        event.producer.version,
-      )
-        ? event.producer.version
-        : "unavailable",
-    eventName: safeProducerEvent(event),
-    sourceIdentity: event.deduplicationKey,
-    payloadHash: event.payloadHash,
-    occurredAt: event.occurredAt,
-    capturedAt: event.capturedAt,
-    adapterDisposition: event.adapter.status,
-    fieldPresence: {
-      sessionIdentity: identity.sessionId !== undefined,
-      turnIdentity: identity.turnId !== undefined,
-      traceIdentity: identity.traceId !== undefined,
-      gitContext: event.gitContext !== undefined,
-      canonicalObservations: event.canonicalObservations.length > 0,
-    },
-  };
 }
 
 interface DeliveryRow {
@@ -628,18 +490,6 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
       last_error TEXT
     ) STRICT
   `);
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS source_event_structural_ledger (
-      id TEXT PRIMARY KEY,
-      session_id TEXT,
-      structural_json TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending'
-        CHECK (state IN ('pending', 'acknowledged', 'poisoned')),
-      attempts INTEGER NOT NULL DEFAULT 0,
-      next_attempt_at TEXT,
-      last_error TEXT
-    ) STRICT
-  `);
   const insert = database.prepare(`
     INSERT OR IGNORE INTO source_event_delivery_queue (
       id, deduplication_key, event_json
@@ -652,22 +502,6 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
   const selectAll = database.prepare(`
     SELECT id, event_json, state, attempts, next_attempt_at, last_error
     FROM source_event_delivery_queue ORDER BY rowid
-  `);
-  const insertStructural = database.prepare(`
-    INSERT OR IGNORE INTO source_event_structural_ledger (
-      id, session_id, structural_json
-    ) VALUES (?, ?, ?)
-  `);
-  const selectStructural = database.prepare(`
-    SELECT structural_json, state, attempts, next_attempt_at, last_error
-    FROM source_event_structural_ledger
-    WHERE (? IS NULL OR session_id = ?)
-    ORDER BY rowid
-  `);
-  const markStructuralPending = database.prepare(`
-    UPDATE source_event_structural_ledger
-    SET state = 'pending', next_attempt_at = NULL, last_error = NULL
-    WHERE id = ?
   `);
   const selectDue = database.prepare(`
     SELECT id, event_json, state, attempts, next_attempt_at, last_error
@@ -690,33 +524,6 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
         next_attempt_at = NULL, last_error = ?
     WHERE id = ?
   `);
-  const acknowledgeStructural = database.prepare(`
-    UPDATE source_event_structural_ledger
-    SET state = 'acknowledged', attempts = attempts + 1,
-        next_attempt_at = NULL, last_error = NULL
-    WHERE id = ?
-  `);
-  const retryStructural = database.prepare(`
-    UPDATE source_event_structural_ledger
-    SET state = 'pending', attempts = attempts + 1,
-        next_attempt_at = ?, last_error = ?
-    WHERE id = ?
-  `);
-  const poisonStructural = database.prepare(`
-    UPDATE source_event_structural_ledger
-    SET state = 'poisoned', attempts = attempts + 1,
-        next_attempt_at = NULL, last_error = ?
-    WHERE id = ?
-  `);
-
-  for (const row of selectAll.all() as unknown as DeliveryRow[]) {
-    const event = toDeliveryItem(row).event;
-    insertStructural.run(
-      event.id,
-      sourceEventStructuralIdentity(event).sessionId ?? null,
-      JSON.stringify(toStructuralObservation(event)),
-    );
-  }
 
   const retryAt = (attempts: number, now: Date) =>
     new Date(
@@ -727,15 +534,7 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
     record(event) {
       const serialized = JSON.stringify(event);
       const result = insert.run(event.id, event.deduplicationKey, serialized);
-      insertStructural.run(
-        event.id,
-        sourceEventStructuralIdentity(event).sessionId ?? null,
-        JSON.stringify(toStructuralObservation(event)),
-      );
-      if (result.changes === 1) {
-        markStructuralPending.run(event.id);
-        return { eventId: event.id, status: "pending" };
-      }
+      if (result.changes === 1) return { eventId: event.id, status: "pending" };
       const existing = selectById.get(event.id) as DeliveryRow | undefined;
       if (!existing || existing.event_json !== serialized) {
         throw new Error("Delivery identity conflicts with different source evidence.");
@@ -744,32 +543,6 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
     },
     pending() {
       return (selectAll.all() as unknown as DeliveryRow[]).map(toDeliveryItem);
-    },
-    structuralStatus(options = {}) {
-      const rows = selectStructural.all(
-        options.sessionId ?? null,
-        options.sessionId ?? null,
-      ) as Array<{
-        structural_json: string;
-        state: DeliveryQueueStructuralObservation["queue"]["state"];
-        attempts: number;
-        next_attempt_at: string | null;
-        last_error: string | null;
-      }>;
-      return {
-        observations: rows.map((row) => ({
-          ...(JSON.parse(row.structural_json) as Omit<
-            DeliveryQueueStructuralObservation,
-            "queue"
-          >),
-          queue: {
-            state: row.state,
-            attempts: row.attempts,
-            nextAttemptAt: row.next_attempt_at,
-            lastError: row.last_error,
-          },
-        })),
-      };
     },
     async deliverOnce(deliveryOptions) {
       const now = deliveryOptions.now ?? new Date();
@@ -796,11 +569,7 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
         if (!response.ok) throw new Error(`DELIVERY_HTTP_${response.status}`);
       } catch (error) {
         const code = error instanceof Error ? error.message : "DELIVERY_NETWORK_ERROR";
-        for (const row of rows) {
-          const nextAttemptAt = retryAt(row.attempts, now);
-          retry.run(nextAttemptAt, code, row.id);
-          retryStructural.run(nextAttemptAt, code, row.id);
-        }
+        for (const row of rows) retry.run(retryAt(row.attempts, now), code, row.id);
         return {
           sent: rows.length,
           acknowledged: 0,
@@ -817,13 +586,7 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
         }
       } catch {
         for (const row of rows) {
-          const nextAttemptAt = retryAt(row.attempts, now);
-          retry.run(nextAttemptAt, "ACKNOWLEDGEMENT_INVALID", row.id);
-          retryStructural.run(
-            nextAttemptAt,
-            "ACKNOWLEDGEMENT_INVALID",
-            row.id,
-          );
+          retry.run(retryAt(row.attempts, now), "ACKNOWLEDGEMENT_INVALID", row.id);
         }
         return {
           sent: rows.length,
@@ -843,17 +606,16 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
         const result = results.get(row.id);
         if (result?.status === "accepted" || result?.status === "duplicate") {
           remove.run(row.id);
-          acknowledgeStructural.run(row.id);
           acknowledged += 1;
         } else if (result?.status === "rejected" && result.retryable === false) {
           poison.run(result.code ?? "SOURCE_EVENT_REJECTED", row.id);
-          poisonStructural.run(result.code ?? "SOURCE_EVENT_REJECTED", row.id);
           poisonedCount += 1;
         } else {
-          const nextAttemptAt = retryAt(row.attempts, now);
-          const code = result?.code ?? "ACKNOWLEDGEMENT_MISSING";
-          retry.run(nextAttemptAt, code, row.id);
-          retryStructural.run(nextAttemptAt, code, row.id);
+          retry.run(
+            retryAt(row.attempts, now),
+            result?.code ?? "ACKNOWLEDGEMENT_MISSING",
+            row.id,
+          );
           retryingCount += 1;
         }
       }
@@ -873,5 +635,4 @@ export function openDeliveryQueue(options: { databasePath: string }): DeliveryQu
 export * from "./launchd.js";
 export * from "./runtime.js";
 export * from "./setup.js";
-export * from "./browser-authorization.js";
 export * from "./standard-sync.js";

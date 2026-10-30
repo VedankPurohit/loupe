@@ -58,26 +58,3 @@ export async function loadInspectorFixture() {
     afterDisconnect: sessionEvents.slice(finalTurnIndex).map(toSourceEvent),
   };
 }
-
-export function setupVerificationFixture(
-  sessionId = "setup-verification-playwright",
-) {
-  return [
-    toSourceEvent({
-      captured_at: "2026-07-18T08:00:00.000Z",
-      payload: {
-        hook_event_name: "SessionStart",
-        session_id: sessionId,
-        source: "startup",
-      },
-    }),
-    toSourceEvent({
-      captured_at: "2026-07-18T08:00:01.000Z",
-      payload: {
-        hook_event_name: "Stop",
-        session_id: sessionId,
-        source: "setup_verification_complete",
-      },
-    }),
-  ];
-}
